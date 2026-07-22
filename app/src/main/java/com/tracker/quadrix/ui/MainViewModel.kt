@@ -56,16 +56,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LocationTrackingService.stop(getApplication())
     }
 
-    /** Manual "check for updates" — polls the version endpoint through [UpdateManager]. */
-    fun checkForUpdates() {
-        viewModelScope.launch {
-            UpdateManager.beginCheck()
-            UpdateManager.refreshVersion()
-                .onSuccess { UpdateManager.endCheck() }
-                .onFailure { UpdateManager.endCheck("Could not check for updates.") }
-        }
-    }
-
     /**
      * Launch-time mandatory-update check. Polls the version endpoint (unauthenticated, so it runs
      * on the login screen too); a newer advertised version flips [updateState].required and

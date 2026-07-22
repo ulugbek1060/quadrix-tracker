@@ -1,28 +1,16 @@
 package com.tracker.quadrix.data
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.provider.Settings
-import android.util.Log
-import android.telephony.TelephonyManager
-import androidx.core.content.ContextCompat
 
 /**
  * Identifies the device to the backend.
  *
- * The IMEI is reported when the platform allows it, which in practice means Android 9 and
- * below, or a device where this app is the device owner / platform-signed / carrier-privileged.
- * Since Android 10 the read requires READ_PRIVILEGED_PHONE_STATE, which cannot be granted to a
- * sideloaded app by any means — [autoImei] is therefore null on most modern devices, and
- * [imeiUnavailableReason] explains why. The IMEI is display-only here; the backend keys on
- * [deviceId] (the value sent as `device_id` at verify-otp and on every location upload).
- *
- * ANDROID_ID remains the identifier the backend can always rely on: no permission, stable
- * across reboots and app updates, unique per device + app signing key, reset only by a factory
- * reset. Note the signing-key scoping — a debug build and a release build report different IDs.
+ * ANDROID_ID is the identifier the backend keys on (sent as `device_id` at verify-otp and on
+ * every location upload): no permission required, stable across reboots and app updates, unique
+ * per device + app signing key, reset only by a factory reset. Note the signing-key scoping — a
+ * debug build and a release build report different IDs.
  */
 class DeviceIdentity(context: Context) {
 
@@ -32,57 +20,4 @@ class DeviceIdentity(context: Context) {
     val deviceId: String =
         Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
             ?: "unknown"
-
-    /** IMEI read from the platform, or null when the platform refuses (the usual case). */
-    val autoImei: String? get() = readImei()
-
-    /** Why [autoImei] is null, phrased for display. Null when an IMEI was obtained. */
-    val imeiUnavailableReason: String?
-        get() {
-            if (autoImei != null) return null
-            return when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
-                    "Android ${Build.VERSION.RELEASE} restricts IMEI to system, carrier and " +
-                        "device-owner apps"
-
-                !hasPhonePermission() -> "Phone permission not granted"
-                else -> "Device did not report an IMEI"
-            }
-        }
-
-    private fun hasPhonePermission(): Boolean = ContextCompat.checkSelfPermission(
-        appContext,
-        Manifest.permission.READ_PHONE_STATE,
-    ) == PackageManager.PERMISSION_GRANTED
-
-    /**
-     * Attempts the read on every API level rather than short-circuiting on 29+.
-     *
-     * On a normal Android 10+ install this always throws SecurityException and returns null —
-     * that is the platform's decision, not something the app can opt out of. It is still worth
-     * attempting, because the same call succeeds unchanged on a device where the app is the
-     * device owner, is platform-signed, or holds carrier privileges. Attempting and catching
-     * means such a deployment starts reporting real IMEIs with no code change.
-     */
-    @SuppressLint("HardwareIds", "MissingPermission")
-    private fun readImei(): String? {
-        if (!hasPhonePermission()) return null
-
-        return runCatching {
-            val telephony = appContext.getSystemService(TelephonyManager::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                telephony?.imei
-            } else {
-                @Suppress("DEPRECATION")
-                telephony?.deviceId
-            }
-        }.getOrElse { error ->
-            Log.i(TAG, "IMEI unavailable: ${error.javaClass.simpleName}")
-            null
-        }?.takeIf { it.isNotBlank() }
-    }
-
-    private companion object {
-        const val TAG = "DeviceIdentity"
-    }
 }

@@ -10,3 +10,10 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+# WorkManager (used by UpdateCheckWorker) initializes its internal Room database by reflecting
+# on the generated *_Impl class's no-arg constructor. R8's default/consumer rules don't reliably
+# preserve it under this AGP's experimental `optimization { enable = true }` full-shrink mode,
+# which crashes at startup with NoSuchMethodException: WorkDatabase_Impl.<init> otherwise.
+-keep class * extends androidx.room.RoomDatabase
+-keep class **_Impl { <init>(); }

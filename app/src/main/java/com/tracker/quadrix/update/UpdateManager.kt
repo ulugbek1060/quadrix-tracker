@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.logging.HttpLoggingInterceptor
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -57,6 +58,15 @@ object UpdateManager {
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .addInterceptor(
+            HttpLoggingInterceptor { message -> Log.d(TAG, message) }.apply {
+                level = if (BuildConfig.DEBUG) {
+                    HttpLoggingInterceptor.Level.BASIC
+                } else {
+                    HttpLoggingInterceptor.Level.NONE
+                }
+            }
+        )
         .build()
 
     /** The version this build reports; the yardstick every server version is compared against. */
@@ -82,14 +92,6 @@ object UpdateManager {
                 onServerVersion(data.version, data.downloadUrl)
             }
         }
-    }
-
-    fun beginCheck() {
-        _state.value = _state.value.copy(checking = true, message = null)
-    }
-
-    fun endCheck(message: String? = null) {
-        _state.value = _state.value.copy(checking = false, message = message)
     }
 
     /**

@@ -31,14 +31,13 @@ android {
         applicationId = "com.tracker.quadrix"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // >>> PLACEHOLDER <<< Replace with the real backend once the API is available.
-        // Must end with a trailing slash. Endpoint paths live in data/api/ApiConfig.kt.
-        buildConfigField("String", "API_BASE_URL", "\"https://api.example.com/\"")
+        // Base URL of the Quadrix backend. Endpoint paths live in data/api/ApiConfig.kt.
+        buildConfigField("String", "API_BASE_URL", "\"https://api.quadrix.ai/\"")
     }
 
     signingConfigs {
@@ -55,7 +54,7 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = false
+                enable = true
             }
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")

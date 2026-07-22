@@ -30,6 +30,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tracker.quadrix.ui.AuthViewModel
+import com.tracker.quadrix.ui.BatteryGateScreen
 import com.tracker.quadrix.ui.LoginScreen
 import com.tracker.quadrix.ui.MainScreen
 import com.tracker.quadrix.ui.ForceUpdateScreen
@@ -98,7 +99,6 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MainRoute(online: Boolean) {
         val tracker by mainViewModel.trackerState.collectAsStateWithLifecycle()
-        val update by mainViewModel.updateState.collectAsStateWithLifecycle()
         val permissions by mainViewModel.permissions.collectAsStateWithLifecycle()
         val loggingOut by authViewModel.loggingOut.collectAsStateWithLifecycle()
 
@@ -179,7 +179,8 @@ class MainActivity : ComponentActivity() {
         }
 
         // All-time location is in place: tracking is guaranteed to have been started by
-        // refreshPermissions(). What remains is the battery-optimisation nudge.
+        // refreshPermissions(). What remains is the battery-optimisation exemption, which is
+        // mandatory — see BatteryGateScreen — not an optional nudge.
         var batteryOptimised by remember { mutableStateOf(mainViewModel.isBatteryOptimised()) }
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -191,20 +192,22 @@ class MainActivity : ComponentActivity() {
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
+        if (batteryOptimised) {
+            BatteryGateScreen(
+                onDisableBatteryOptimisation = ::requestIgnoreBatteryOptimisations,
+                onOpenSettings = ::openAppSettings,
+            )
+            return
+        }
+
         MainScreen(
             email = authViewModel.userEmail,
             deviceId = authViewModel.deviceId,
-            imei = authViewModel.imei,
-            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
             online = online,
             tracker = tracker,
-            update = update,
             permissionsGranted = true,
-            batteryOptimised = batteryOptimised,
             loggingOut = loggingOut,
             onGrantPermissions = { foregroundLauncher.launch(foregroundPermissions()) },
-            onDisableBatteryOptimisation = ::requestIgnoreBatteryOptimisations,
-            onCheckForUpdates = mainViewModel::checkForUpdates,
             onLogout = authViewModel::logout,
         )
     }
@@ -238,11 +241,6 @@ class MainActivity : ComponentActivity() {
 
     private fun foregroundPermissions(): Array<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
-        // Only worth prompting for where it can actually yield an IMEI. On Android 10+ the
-        // permission grants nothing extra, so asking would cost a prompt and gain nothing.
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            add(Manifest.permission.READ_PHONE_STATE)
-        }
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)

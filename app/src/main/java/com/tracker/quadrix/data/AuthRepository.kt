@@ -1,6 +1,7 @@
 package com.tracker.quadrix.data
 
 import android.content.Context
+import android.util.Log
 import com.tracker.quadrix.data.api.ApiException
 import com.tracker.quadrix.data.api.RequestOtpData
 import com.tracker.quadrix.data.api.SessionExpiredException
@@ -34,11 +35,6 @@ class AuthRepository(context: Context) {
     val currentUserEmail: String? get() = session.userEmail
     val currentUserName: String? get() = session.userName
     val deviceId: String get() = identity.deviceId
-
-    /** Platform-reported IMEI where obtainable, else null. Shown on the status screen only. */
-    val imei: String? get() = identity.autoImei
-    val imeiIsFromPlatform: Boolean get() = identity.autoImei != null
-    val imeiUnavailableReason: String? get() = identity.imeiUnavailableReason
 
     /** Asks the backend to email a verification code. */
     suspend fun requestOtp(email: String): Result<RequestOtpData> = withContext(Dispatchers.IO) {
@@ -80,15 +76,24 @@ class AuthRepository(context: Context) {
         Unit
     }
 
-    private fun mapError(error: Throwable): Throwable = when {
-        error is ApiException && error.code in 400..499 ->
-            IllegalArgumentException(error.message ?: "Invalid request.")
-        error is ApiException && error.code >= 500 ->
-            IOException("Server error — try again shortly.")
-        error is SessionExpiredException ->
-            IllegalStateException("Session expired — sign in again.")
-        error is IOException ->
-            IOException("Could not reach the server.")
-        else -> error
+    private fun mapError(error: Throwable): Throwable {
+        // The user-facing messages below are deliberately generic; log the real cause so a
+        // failed sign-in (wrong base URL, cleartext blocked, DNS, TLS, timeout) is diagnosable.
+        Log.w(TAG, "Auth request failed: ${error.javaClass.simpleName}: ${error.message}", error)
+        return when {
+            error is ApiException && error.code in 400..499 ->
+                IllegalArgumentException(error.message ?: "Invalid request.")
+            error is ApiException && error.code >= 500 ->
+                IOException("Server error — try again shortly.")
+            error is SessionExpiredException ->
+                IllegalStateException("Session expired — sign in again.")
+            error is IOException ->
+                IOException("Could not reach the server.")
+            else -> error
+        }
+    }
+
+    private companion object {
+        const val TAG = "AuthRepository"
     }
 }

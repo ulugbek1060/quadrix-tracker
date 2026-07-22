@@ -53,8 +53,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Shown on the main screen so an operator can read off the ID the backend registered. */
     val deviceId: String get() = authRepository.deviceId
-    val imei: String? get() = authRepository.imei
-    val imeiUnavailableReason: String? get() = authRepository.imeiUnavailableReason
 
     fun onEmailChange(value: String) =
         _loginState.update { it.copy(email = value, error = null) }

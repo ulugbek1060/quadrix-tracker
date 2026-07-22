@@ -53,10 +53,25 @@ class TrackerApi(
         explicitNulls = false
     }
 
+    /**
+     * Logs the full request/response (method, URL, headers, body) to logcat under [TAG] in debug
+     * builds, and — crucially — the reason a call failed to connect (`<-- HTTP FAILED: …`), which
+     * is what surfaces as "Could not reach the server". Filter logcat by tag `TrackerApi`.
+     */
+    private val loggingInterceptor = HttpLoggingInterceptor { message -> Log.d(TAG, message) }
+        .apply {
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BODY
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
+        }
+
     /** Bare client used only by the refresh exchange, so it never triggers the authenticator. */
     private val refreshClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor(loggingInterceptor)
         .build()
 
     private val client = OkHttpClient.Builder()
@@ -67,15 +82,7 @@ class TrackerApi(
         // where the radio sleeps between our 5-minute uploads.
         .retryOnConnectionFailure(true)
         .authenticator { route, response -> refreshAndRetry(route, response) }
-        .apply {
-            if (BuildConfig.DEBUG) {
-                addInterceptor(
-                    HttpLoggingInterceptor().apply {
-                        level = HttpLoggingInterceptor.Level.BASIC
-                    }
-                )
-            }
-        }
+        .addInterceptor(loggingInterceptor)
         .build()
 
     // ---- endpoints ----
