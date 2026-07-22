@@ -11,13 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Exact alarms give the watchdog a window in which it may restart the service from the
-         background; the app degrades to an inexact alarm if the user denies it. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Yields an IMEI on Android 9 and below. Left uncapped so that a device-owner or
-         platform-signed deployment on a newer Android can still be granted it; on an ordinary
-         Android 10+ install the read fails regardless and the IMEI is entered by hand. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <uses-feature
@@ -68,6 +64,17 @@
             android:name=".location.TrackerWatchdog$WatchdogReceiver"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- Shares the downloaded update APK with the system installer via a content:// URI. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

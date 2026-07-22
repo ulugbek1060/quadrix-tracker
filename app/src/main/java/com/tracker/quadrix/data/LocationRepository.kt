@@ -4,8 +4,9 @@ import android.content.Context
 import android.location.Location
 import android.util.Log
 import com.tracker.quadrix.data.api.ApiException
-import com.tracker.quadrix.data.api.LocationBatchRequest
 import com.tracker.quadrix.data.api.LocationPayload
+import com.tracker.quadrix.data.api.LocationUploadBody
+import com.tracker.quadrix.data.api.SessionExpiredException
 import com.tracker.quadrix.data.api.TrackerApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,10 +20,11 @@ sealed interface UploadResult {
 }
 
 /**
- * Records fixes locally, then drains the queue to the REST API.
+ * Records fixes locally, then drains the queue to `POST /api/tablet/location/` one fix per
+ * request (the endpoint takes a single position, not a batch).
  *
  * Recording and sending are separated on purpose: a fix is never lost because the network
- * happened to be down at that instant, and a reconnect flushes the whole backlog in batches.
+ * happened to be down at that instant, and a reconnect flushes the whole backlog.
  */
 class LocationRepository(context: Context) {
 
@@ -31,7 +33,15 @@ class LocationRepository(context: Context) {
     private val queue = LocationQueue(appContext)
     private val connectivity = ConnectivityObserver(appContext)
     private val identity = DeviceIdentity(appContext)
-    private val api = TrackerApi { session.authToken }
+    private val api = TrackerApi(
+        accessTokenProvider = { session.accessToken },
+        refreshTokenProvider = { session.refreshToken },
+        onTokensRefreshed = { access -> session.accessToken = access },
+        onSessionExpired = {
+            session.accessToken = null
+            session.refreshToken = null
+        },
+    )
 
     /** Guards against a flush triggered by reconnect overlapping the 5-minute flush. */
     private val flushLock = Mutex()
@@ -44,6 +54,7 @@ class LocationRepository(context: Context) {
                 accuracy = location.accuracy,
                 altitude = location.altitude,
                 speed = location.speed,
+                heading = location.bearing,
                 provider = location.provider,
                 recordedAt = location.time,
                 batteryPercent = BatteryLevel.read(appContext),
@@ -56,14 +67,7 @@ class LocationRepository(context: Context) {
     fun clear() = queue.clear()
 
     suspend fun flush(): UploadResult = flushLock.withLock {
-        val token = session.authToken
-            ?: return@withLock UploadResult.Unauthorized("Not signed in")
-
-        // Debug test account: pretend the server accepted the batch, so the whole flow can be
-        // exercised without a backend.
-        if (TestAccount.isActiveSession(token)) {
-            return@withLock drainAsTestSession()
-        }
+        session.accessToken ?: return@withLock UploadResult.Unauthorized("Not signed in")
 
         if (!connectivity.isOnline()) {
             return@withLock UploadResult.Offline
@@ -71,18 +75,26 @@ class LocationRepository(context: Context) {
 
         var sent = 0
         while (true) {
-            val batch = queue.peek(BATCH_SIZE)
-            if (batch.isEmpty()) break
+            val fix = queue.peek(1).firstOrNull() ?: break
 
             try {
-                api.uploadLocations(
-                    LocationBatchRequest(deviceId = identity.deviceId, locations = batch)
+                api.uploadLocation(
+                    LocationUploadBody(
+                        deviceId = identity.deviceId,
+                        latitude = fix.latitude,
+                        longitude = fix.longitude,
+                        heading = fix.heading,
+                        speed = fix.speed,
+                    )
                 )
+            } catch (e: SessionExpiredException) {
+                Log.w(TAG, "Upload unauthorized", e)
+                return@withLock UploadResult.Unauthorized("Session expired — sign in again")
             } catch (e: ApiException) {
                 Log.w(TAG, "Upload rejected", e)
-                // 401/403 means the token is dead — keep the fixes, they will go out after
-                // the next successful login rather than being dropped.
-                return@withLock if (e.code == 401 || e.code == 403) {
+                // 403 keeps the fixes; they go out after the next successful login rather than
+                // being dropped. (401 surfaces as SessionExpiredException above.)
+                return@withLock if (e.code == 403) {
                     UploadResult.Unauthorized("Session expired — sign in again")
                 } else {
                     UploadResult.Failed("HTTP ${e.code}")
@@ -92,8 +104,8 @@ class LocationRepository(context: Context) {
                 return@withLock UploadResult.Failed(e.message ?: "Network error")
             }
 
-            queue.removeFirst(batch.size)
-            sent += batch.size
+            queue.removeFirst(1)
+            sent++
         }
 
         if (sent > 0) {
@@ -105,24 +117,7 @@ class LocationRepository(context: Context) {
         }
     }
 
-    private fun drainAsTestSession(): UploadResult {
-        val pending = queue.peek(Int.MAX_VALUE)
-        if (pending.isEmpty()) return UploadResult.NothingToSend
-
-        pending.forEach { fix ->
-            Log.i(TAG, "TEST MODE — would POST ${fix.latitude}, ${fix.longitude} @ ${fix.recordedAt}")
-        }
-        queue.removeFirst(pending.size)
-
-        session.lastUploadAt = System.currentTimeMillis()
-        session.uploadCount += pending.size
-        return UploadResult.Sent(pending.size)
-    }
-
     private companion object {
         const val TAG = "LocationRepository"
-
-        /** Small enough that a rejected batch costs little, big enough to drain a backlog. */
-        const val BATCH_SIZE = 50
     }
 }

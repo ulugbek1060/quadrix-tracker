@@ -66,7 +66,7 @@ object TrackerWatchdog {
     class WatchdogReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val session = SessionManager(context)
-            if (!session.trackingEnabled || session.authToken == null) {
+            if (!session.trackingEnabled || session.accessToken == null) {
                 cancel(context)
                 return
             }

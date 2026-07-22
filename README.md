@@ -1,83 +1,64 @@
 # Tracker
 
 Android app that records the device location every 5 minutes in the background and POSTs it to
-a REST API. Firebase is used for one thing only: distributing new versions to testers through
-App Distribution. The app is not published on Google Play.
+a REST API. New versions are shipped by hosting a signed APK and letting the app download and
+install it in place — there is no Firebase and no Google Play involvement.
 
 ## Wiring up your backend
 
-The API is a **placeholder** until you provide the real one. Everything you need to change is
-in two files:
+The backend contract lives in `doc/api-doc.md`. Everything the app needs to reach it is in
+three files:
 
 | What | Where |
 | --- | --- |
-| Base URL | `API_BASE_URL` in `app/build.gradle.kts` |
-| Endpoint paths + expected contract | `data/api/ApiConfig.kt` |
+| Base URL | `API_BASE_URL` in `app/build.gradle.kts` (must end with `/`) |
+| Endpoint paths | `data/api/ApiConfig.kt` |
 | Request/response JSON shapes | `data/api/ApiModels.kt` |
 
 The main screen shows a red "Backend not configured" warning while the base URL still points at
 `api.example.com`.
 
-### Expected contract
+### Contract
+
+The auth/location endpoints use the envelope `{ status, data, message, errors }`. Updates are
+driven by a **separate, unenveloped version endpoint** (see below), not by these responses.
 
 ```
-POST {base}auth/login
-  { "email": "…", "password": "…",
-    "device": { "device_id": "…", "imei": null, "manufacturer": "…", "model": "…",
-                "os_version": "…", "sdk_int": 34, "app_version": "1.0", "app_version_code": 1 } }
-  → 200 { "token": "…", "user_id": "…", "email": "…" }
-  → 401 invalid credentials
+POST {base}api/tablet/auth/request-otp/    { email }
+  → data: { email, expires_in, resend_after }
 
-POST {base}locations          Authorization: Bearer <token>
-  { "device_id": "…",
-    "locations": [ { "latitude": 41.3, "longitude": 69.2, "accuracy": 12.5, "altitude": 430.0,
-                     "speed": 0.0, "provider": "fused", "recorded_at": 1770000000000,
-                     "battery_percent": 87 } ] }
-  → 2xx  batch accepted and removed from the local queue
-  → 401/403  token treated as expired; fixes are kept for the next session
-  → anything else  retried on the next cycle
+POST {base}api/tablet/auth/verify-otp/     { email, code, device_id }
+  → data: { tokens: { access, refresh }, user: {…}, device_id, client_type }
+
+GET  {base}api/tablet/auth/me/             Authorization: Bearer <access>
+  → data: { id, username, email, name, role, company_id, client_type }
+
+POST {base}api/tablet/location/            Authorization: Bearer <access>
+  { device_id, latitude, longitude, heading, speed }
+  → data: { device_id }
+
+POST {base}api/token/refresh/              { refresh }
+  → { access }   (accepted at the root or inside data)
+
+GET  {base}api/tablet/app/version/         (unauthenticated)
+  → { version, download_url }              (flat — no envelope)
 ```
 
-Locations are sent as a **batch array**, not one per request — after an offline stretch the
-whole backlog is drained in batches of 50.
+Auth is OTP: request a code by email, then verify it with the code plus this device's
+`device_id`. Verify returns a JWT **access**/**refresh** pair. The access token is sent on every
+authenticated call; on a `401` the client transparently exchanges the refresh token for a new
+access token (`/api/token/refresh/`) and replays the request. When refresh itself fails the
+session is cleared and the user is sent back to sign-in.
 
-Prefer renaming JSON keys with `@SerialName` in `ApiModels.kt` over renaming the Kotlin
-properties, so the rest of the app stays untouched.
+Locations are sent **one fix per request**, not batched. Fixes recorded while offline are queued
+and drained one POST at a time on reconnect.
 
 **If your API is plain HTTP**, Android blocks cleartext by default. Either use HTTPS, or add a
 network security config permitting cleartext for your host.
 
-## Temporary test account (debug builds only)
-
-Until the API exists, debug builds accept a stub login:
-
-```
-test@tracker.local / test1234
-```
-
-The login screen shows a card with these credentials and a "Fill in test account" button. This
-account works **offline** — it never touches the network — and stubs out uploads: the queue
-drains as though the server had accepted each batch, and the fixes are written to logcat
-(`LocationRepository`, tag `TEST MODE`). That makes the whole flow testable now: login →
-permissions → 5-minute tracking → status screen → logout wipe.
-
-It is genuinely absent from release builds, not just disabled. `TestAccount` exists twice —
-`app/src/debug/…` with the real credentials, `app/src/release/…` as an inert twin whose methods
-always return false. A `BuildConfig.DEBUG` check would not have been enough: minification is
-off (`optimization { enable = false }`), so dead code is not stripped and the credentials would
-sit in the release APK as readable strings. Verified: 0 occurrences in the release dex.
-
-**Delete both files** once the real API is wired up.
-
 ## Device identification — please read
 
-**IMEI cannot be read.** Since Android 10 (API 29), `getImei()` requires
-`READ_PRIVILEGED_PHONE_STATE`, granted only to apps signed with the platform key or a carrier
-certificate. A sideloaded app gets a `SecurityException` no matter what it requests. The `imei`
-field is sent for completeness but is `null` on Android 10+, i.e. on essentially every device
-in use today.
-
-**`device_id` is what you should key on.** It is `ANDROID_ID`:
+**`device_id` is what the backend keys on.** It is `ANDROID_ID`:
 
 - no permission required
 - stable across reboots, app updates and Android upgrades
@@ -85,23 +66,40 @@ in use today.
   same app report *different* IDs, and reinstalling with a different key changes it
 - reset by a factory reset
 
-It is displayed on the main screen so a tester can read it out during enrolment. If you need an
-identifier that survives factory resets, that requires enterprise enrolment (device owner via an
-MDM), which is a different distribution model altogether.
+It is displayed on the main screen so an operator can read it out during enrolment.
 
-## Firebase setup (updates only)
+**IMEI is display-only.** Since Android 10 (API 29) `getImei()` requires
+`READ_PRIVILEGED_PHONE_STATE`, granted only to platform-signed, carrier or device-owner apps; a
+sideloaded app gets a `SecurityException`. So the status screen shows the IMEI only where the
+platform still allows it, and nothing is sent to the backend. If you need an identifier that
+survives factory resets, that requires enterprise enrolment (device owner via an MDM).
 
-1. Create a Firebase project, add an Android app with package `com.tracker.quadrix`.
-2. Download `google-services.json` into `app/`. **The build fails without it.**
-3. Add testers in App Distribution, in a group named `testers` (or change `groups` in
-   `app/build.gradle.kts`).
+## In-app updates (self-hosted)
 
-No Authentication or Firestore setup is needed — those dependencies were removed.
+There is no app store and no Firebase. Updates are driven by the dedicated
+`GET api/tablet/app/version/` endpoint, which returns `{ version, download_url }`:
+
+1. `UpdateManager.refreshVersion()` polls the endpoint and compares `version` to the installed
+   `versionName`.
+2. If the server version is strictly newer, the whole app is blocked behind a non-dismissible
+   `ForceUpdateScreen`.
+3. "Update now" downloads the APK from `download_url` and hands it to the system installer.
+
+The endpoint is polled in four places: at launch, from the "Check for updates" button, every 30
+minutes by the background location service while tracking is on, and — when tracking is **off** —
+by a periodic `UpdateCheckWorker` (WorkManager, ~30-minute cadence, survives reboots). The
+background pollers raise a **notification** when a newer version appears; tapping it opens the app
+onto the force-update gate. The worker steps aside when the tracking service is running so the two
+never double up. Because the endpoint is unauthenticated, the check also runs on the login screen.
+
+On Android 8+ the user must allow Tracker to "install unknown apps"; the updater routes them to
+that setting when it is missing (`REQUEST_INSTALL_PACKAGES`, plus a `FileProvider` to share the
+downloaded APK).
 
 ### Release signing
 
-App Distribution only offers updates between builds signed with the same key. Create
-`keystore.properties` in the project root (git-ignored):
+Android only installs an update over an existing app when both are signed with the **same key**.
+Create `keystore.properties` in the project root (git-ignored):
 
 ```
 storeFile=tracker-release.jks
@@ -115,13 +113,12 @@ also changes every device's `device_id`.
 
 ## Shipping a new version
 
-1. Bump `versionCode` (and `versionName`) in `app/build.gradle.kts` — the in-app updater only
-   offers builds with a **higher `versionCode`**.
-2. Edit `release-notes.txt`.
-3. `./gradlew assembleRelease appDistributionUploadRelease`
+1. Bump `versionName` (and `versionCode`) in `app/build.gradle.kts` — the updater compares
+   `versionName` against the server's `version`.
+2. `./gradlew assembleRelease` and host the signed APK where `download_url` points.
+3. Point `GET api/tablet/app/version/` at the new `version` and `download_url`.
 
-Authenticate first with `firebase login`, or set `FIREBASE_TOKEN` /
-`GOOGLE_APPLICATION_CREDENTIALS` in CI.
+Every signed-in client picks up the update on its next API call.
 
 ## Staying alive in the background
 
@@ -136,8 +133,8 @@ it up, because no single one is reliable across OEMs:
 | `BootCompletedReceiver` | reboots, app updates, OEM quick-boot |
 | Battery optimisation exemption prompt | Doze freezing the app overnight |
 
-The watchdog and boot receiver only act when the session says tracking was on *and* a token is
-still stored, so logging out genuinely stops everything.
+The watchdog and boot receiver only act when the session says tracking was on *and* an access
+token is still stored, so logging out genuinely stops everything.
 
 **Caveat worth knowing:** aggressive OEM battery managers (Xiaomi, Huawei, Oppo, Samsung) kill
 background services regardless of what Android's own rules allow. Those devices need the app
@@ -152,9 +149,9 @@ drains on every 5-minute tick and immediately on reconnect, and is wiped on logo
 
 ## Logout
 
-Stops the service, cancels the watchdog, signs out the App Distribution tester, and erases the
-token, user details, queued locations and app caches. `android:allowBackup="false"` keeps the
-data out of cloud backups too.
+Stops the service, cancels the watchdog, clears the update notification, and erases the
+access/refresh tokens, user details, queued locations and app caches. `android:allowBackup="false"`
+keeps the data out of cloud backups too.
 
 ## Permissions
 

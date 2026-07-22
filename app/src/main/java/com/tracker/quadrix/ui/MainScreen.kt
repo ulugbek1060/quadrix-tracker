@@ -302,7 +302,6 @@ private fun UpdateCard(
             Text("App version", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
             InfoRow("Installed", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-            InfoRow("Channel", "Firebase App Distribution")
 
             if (update.availableVersion != null) {
                 InfoRow("Available", update.availableVersion)

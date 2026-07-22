@@ -22,14 +22,13 @@ import kotlinx.coroutines.launch
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val connectivity = ConnectivityObserver(application)
-    private val updateManager = UpdateManager()
 
     val online: StateFlow<Boolean> = connectivity.observe()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), connectivity.isOnline())
 
     val trackerState: StateFlow<TrackerState> = TrackerStatus.state
 
-    val updateState: StateFlow<UpdateState> = updateManager.state
+    val updateState: StateFlow<UpdateState> = UpdateManager.state
 
     private val _permissions = MutableStateFlow(
         LocationPermissionStatus.read(application)
@@ -57,17 +56,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         LocationTrackingService.stop(getApplication())
     }
 
+    /** Manual "check for updates" — polls the version endpoint through [UpdateManager]. */
     fun checkForUpdates() {
-        viewModelScope.launch { updateManager.checkAndUpdate() }
+        viewModelScope.launch {
+            UpdateManager.beginCheck()
+            UpdateManager.refreshVersion()
+                .onSuccess { UpdateManager.endCheck() }
+                .onFailure { UpdateManager.endCheck("Could not check for updates.") }
+        }
     }
 
-    /** Launch-time mandatory-update check; may flip [updateState].required to block the app. */
+    /**
+     * Launch-time mandatory-update check. Polls the version endpoint (unauthenticated, so it runs
+     * on the login screen too); a newer advertised version flips [updateState].required and
+     * blocks the app.
+     */
     fun enforceUpdate() {
-        viewModelScope.launch { updateManager.enforceUpdate() }
+        viewModelScope.launch { UpdateManager.refreshVersion() }
     }
 
     fun startForcedUpdate() {
-        viewModelScope.launch { updateManager.startUpdate() }
+        viewModelScope.launch { UpdateManager.downloadAndInstall(getApplication()) }
     }
 
     /**

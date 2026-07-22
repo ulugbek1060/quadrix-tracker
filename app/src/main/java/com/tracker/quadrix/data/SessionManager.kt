@@ -6,29 +6,37 @@ import androidx.core.content.edit
 /**
  * Everything the app persists about the signed-in user. Deliberately tiny, so that
  * [clear] is a complete wipe rather than a best-effort one.
+ *
+ * Auth is a pair of JWTs: the short-lived [accessToken] sent on every request, and the
+ * [refreshToken] exchanged for a new access token when it expires (see TrackerApi). The
+ * presence of [accessToken] is what "logged in" means.
  */
 class SessionManager(context: Context) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /** Bearer token from verify-otp; refreshed in place when it expires. */
+    var accessToken: String?
+        get() = prefs.getString(KEY_ACCESS, null)
+        set(value) = prefs.edit { putString(KEY_ACCESS, value) }
+
+    /** Long-lived token used to mint a new [accessToken] via /api/token/refresh/. */
+    var refreshToken: String?
+        get() = prefs.getString(KEY_REFRESH, null)
+        set(value) = prefs.edit { putString(KEY_REFRESH, value) }
+
     var userEmail: String?
         get() = prefs.getString(KEY_EMAIL, null)
         set(value) = prefs.edit { putString(KEY_EMAIL, value) }
 
-    /** Bearer token from the login endpoint. Its presence is what "logged in" means. */
-    var authToken: String?
-        get() = prefs.getString(KEY_TOKEN, null)
-        set(value) = prefs.edit { putString(KEY_TOKEN, value) }
+    var userName: String?
+        get() = prefs.getString(KEY_NAME, null)
+        set(value) = prefs.edit { putString(KEY_NAME, value) }
 
     var userId: String?
         get() = prefs.getString(KEY_USER_ID, null)
         set(value) = prefs.edit { putString(KEY_USER_ID, value) }
-
-    /** IMEI typed in at login, used when the platform refuses to report one. */
-    var manualImei: String?
-        get() = prefs.getString(KEY_MANUAL_IMEI, null)
-        set(value) = prefs.edit { putString(KEY_MANUAL_IMEI, value) }
 
     var trackingEnabled: Boolean
         get() = prefs.getBoolean(KEY_TRACKING, false)
@@ -50,10 +58,11 @@ class SessionManager(context: Context) {
 
     private companion object {
         const val PREFS_NAME = "tracker_session"
+        const val KEY_ACCESS = "access_token"
+        const val KEY_REFRESH = "refresh_token"
         const val KEY_EMAIL = "user_email"
-        const val KEY_TOKEN = "auth_token"
+        const val KEY_NAME = "user_name"
         const val KEY_USER_ID = "user_id"
-        const val KEY_MANUAL_IMEI = "manual_imei"
         const val KEY_TRACKING = "tracking_enabled"
         const val KEY_LAST_UPLOAD = "last_upload_at"
         const val KEY_LAST_LOCATION = "last_known_location"

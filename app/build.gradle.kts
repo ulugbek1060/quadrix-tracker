@@ -4,26 +4,13 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.google.services) apply false
-    alias(libs.plugins.firebase.appdistribution)
-}
-
-// Firebase is only used for App Distribution updates, so a missing google-services.json must
-// not stop the app from building — otherwise nothing is testable until the Firebase project
-// exists. UpdateManager degrades gracefully when Firebase is absent at runtime.
-val hasFirebaseConfig = project.file("google-services.json").exists()
-if (hasFirebaseConfig) {
-    apply(plugin = "com.google.gms.google-services")
-} else {
-    logger.lifecycle(
-        "Tracker: app/google-services.json not found — building without Firebase. " +
-            "In-app updates will be unavailable in this build."
-    )
 }
 
 // Optional release keystore. Create `keystore.properties` in the project root with
-// storeFile / storePassword / keyAlias / keyPassword to sign the builds you upload to
-// Firebase App Distribution. Without it, release builds fall back to the debug key.
+// storeFile / storePassword / keyAlias / keyPassword to sign the APKs you host for the
+// in-app updater. The signing key must stay identical across versions, otherwise Android
+// refuses to install the downloaded update over the existing app. Without it, release builds
+// fall back to the debug key.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
@@ -88,13 +75,10 @@ android {
     }
 }
 
-// `./gradlew assembleRelease appDistributionUploadRelease` builds and ships a new version.
-// Testers are notified in the App Distribution app; the in-app SDK check lives in UpdateManager.
-firebaseAppDistributionDefault {
-    artifactType = "APK"
-    groups = "testers"
-    releaseNotesFile = "release-notes.txt"
-}
+// Updates are shipped by hosting the signed APK behind `apk_url` (returned by the backend on
+// every response) and bumping `versionName` above. UpdateManager compares the server's
+// `app_version` to the installed `versionName`, downloads the APK and launches the installer.
+// Keep the same signing key for every release so the update installs over the existing app.
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
@@ -108,17 +92,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // Firebase is used for one thing only: shipping new versions to testers.
-    // The API artifact is a no-op stub; the full SDK is what actually performs the update.
-    implementation(libs.firebase.appdistribution.api)
-    implementation(libs.firebase.appdistribution)
-
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.play.services.location)
     implementation(libs.kotlinx.coroutines.play.services)
+
+    // Periodic update polling when the tracking service is not running.
+    implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -9,8 +9,6 @@ import android.provider.Settings
 import android.util.Log
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
-import com.tracker.quadrix.BuildConfig
-import com.tracker.quadrix.data.api.DeviceInfo
 
 /**
  * Identifies the device to the backend.
@@ -19,8 +17,8 @@ import com.tracker.quadrix.data.api.DeviceInfo
  * below, or a device where this app is the device owner / platform-signed / carrier-privileged.
  * Since Android 10 the read requires READ_PRIVILEGED_PHONE_STATE, which cannot be granted to a
  * sideloaded app by any means — [autoImei] is therefore null on most modern devices, and
- * [imeiUnavailableReason] explains why. A manually entered IMEI can be supplied at login as a
- * fallback; see [toDeviceInfo].
+ * [imeiUnavailableReason] explains why. The IMEI is display-only here; the backend keys on
+ * [deviceId] (the value sent as `device_id` at verify-otp and on every location upload).
  *
  * ANDROID_ID remains the identifier the backend can always rely on: no permission, stable
  * across reboots and app updates, unique per device + app signing key, reset only by a factory
@@ -51,22 +49,6 @@ class DeviceIdentity(context: Context) {
                 else -> "Device did not report an IMEI"
             }
         }
-
-    fun toDeviceInfo(manualImei: String? = null): DeviceInfo = DeviceInfo(
-        deviceId = deviceId,
-        imei = autoImei ?: manualImei?.takeIf { it.isNotBlank() },
-        imeiSource = when {
-            autoImei != null -> "platform"
-            !manualImei.isNullOrBlank() -> "manual"
-            else -> "unavailable"
-        },
-        manufacturer = Build.MANUFACTURER,
-        model = Build.MODEL,
-        osVersion = Build.VERSION.RELEASE,
-        sdkInt = Build.VERSION.SDK_INT,
-        appVersion = BuildConfig.VERSION_NAME,
-        appVersionCode = BuildConfig.VERSION_CODE,
-    )
 
     private fun hasPhonePermission(): Boolean = ContextCompat.checkSelfPermission(
         appContext,

@@ -1,32 +1,38 @@
 package com.tracker.quadrix.ui
 
 import android.app.Application
+import android.util.Patterns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tracker.quadrix.data.AuthRepository
 import com.tracker.quadrix.data.ConnectivityObserver
 import com.tracker.quadrix.data.SessionManager
-import com.tracker.quadrix.data.TestAccount
 import com.tracker.quadrix.location.LocationTrackingService
 import com.tracker.quadrix.location.TrackerStatus
-import com.tracker.quadrix.update.UpdateManager
 import com.tracker.quadrix.update.UpdateNotifier
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Which half of the OTP sign-in the user is on. */
+enum class LoginStep { EMAIL, OTP }
+
 data class LoginUiState(
+    val step: LoginStep = LoginStep.EMAIL,
     val email: String = "",
-    val password: String = "",
-    /** Typed in only when the platform will not give us one; see [AuthViewModel.imeiReadOnly]. */
-    val imei: String = "",
+    val code: String = "",
     val loading: Boolean = false,
     val error: String? = null,
+    /** Confirmation text, e.g. "Code sent to …". */
+    val info: String? = null,
+    /** Seconds until another code may be requested; 0 once resend is allowed. */
+    val resendAfter: Int = 0,
 )
 
-/** Owns the session: who is signed in, signing in, and the logout wipe. */
+/** Owns the session: OTP sign-in and the logout wipe. */
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private val authRepository = AuthRepository(application)
@@ -36,69 +42,91 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _loggedIn = MutableStateFlow(authRepository.isLoggedIn)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
 
-    private val _loginState = MutableStateFlow(
-        LoginUiState(imei = authRepository.imei.orEmpty())
-    )
+    private val _loginState = MutableStateFlow(LoginUiState())
     val loginState: StateFlow<LoginUiState> = _loginState.asStateFlow()
-
-    val imei: String? get() = authRepository.imei
-
-    /** True when the platform gave us a real IMEI, so the field must not be edited. */
-    val imeiReadOnly: Boolean get() = authRepository.imeiIsFromPlatform
-
-    val imeiUnavailableReason: String? get() = authRepository.imeiUnavailableReason
 
     private val _loggingOut = MutableStateFlow(false)
     val loggingOut: StateFlow<Boolean> = _loggingOut.asStateFlow()
 
     val userEmail: String? get() = authRepository.currentUserEmail ?: session.userEmail
+    val userName: String? get() = authRepository.currentUserName
 
-    /** Shown on the main screen so a tester can read off the ID the backend registered. */
+    /** Shown on the main screen so an operator can read off the ID the backend registered. */
     val deviceId: String get() = authRepository.deviceId
+    val imei: String? get() = authRepository.imei
+    val imeiUnavailableReason: String? get() = authRepository.imeiUnavailableReason
 
-    fun onEmailChange(value: String) = _loginState.update { it.copy(email = value, error = null) }
+    fun onEmailChange(value: String) =
+        _loginState.update { it.copy(email = value, error = null) }
 
-    fun onPasswordChange(value: String) =
-        _loginState.update { it.copy(password = value, error = null) }
-
-    /** Digits only — an IMEI is 15 digits, and operators habitually paste in spaces. */
-    fun onImeiChange(value: String) = _loginState.update {
-        it.copy(imei = value.filter(Char::isDigit).take(17), error = null)
+    /** Digits only — the codes are numeric and users paste them with stray spaces. */
+    fun onCodeChange(value: String) = _loginState.update {
+        it.copy(code = value.filter(Char::isDigit).take(OTP_LENGTH), error = null)
     }
 
-    /** Debug convenience: fills the form with the stub credentials. */
-    fun useTestAccount() = _loginState.update {
-        it.copy(email = TestAccount.EMAIL, password = TestAccount.PASSWORD, error = null)
+    /** Back to the email step to correct a typo'd address. */
+    fun changeEmail() = _loginState.update {
+        it.copy(step = LoginStep.EMAIL, code = "", error = null, info = null)
     }
 
-    fun signIn() {
+    /** Step 1: ask the backend to email a verification code. */
+    fun requestOtp() {
         val state = _loginState.value
         if (state.loading) return
 
-        when {
-            state.email.isBlank() -> {
-                _loginState.update { it.copy(error = "Enter your email.") }
-                return
-            }
+        if (!isValidEmail(state.email)) {
+            _loginState.update { it.copy(error = "Enter a valid email address.") }
+            return
+        }
+        if (!connectivity.isOnline()) {
+            _loginState.update { it.copy(error = "No internet connection.") }
+            return
+        }
 
-            state.password.isBlank() -> {
-                _loginState.update { it.copy(error = "Enter your password.") }
-                return
-            }
+        _loginState.update { it.copy(loading = true, error = null, info = null) }
+        viewModelScope.launch {
+            authRepository.requestOtp(state.email)
+                .onSuccess { data ->
+                    _loginState.update {
+                        it.copy(
+                            step = LoginStep.OTP,
+                            loading = false,
+                            info = "Code sent to ${data.email ?: state.email.trim()}.",
+                        )
+                    }
+                    startResendCountdown(data.resendAfter)
+                }
+                .onFailure { error ->
+                    _loginState.update {
+                        it.copy(loading = false, error = error.message ?: "Could not send code.")
+                    }
+                }
+        }
+    }
 
-            // The test account never touches the network, so being offline is no obstacle.
-            !connectivity.isOnline() && !TestAccount.matches(state.email, state.password) -> {
-                _loginState.update { it.copy(error = "No internet connection.") }
-                return
-            }
+    fun resendOtp() {
+        if (_loginState.value.resendAfter > 0) return
+        requestOtp()
+    }
+
+    /** Step 2: verify the code and open the session. */
+    fun verifyOtp() {
+        val state = _loginState.value
+        if (state.loading) return
+
+        if (state.code.length < OTP_LENGTH) {
+            _loginState.update { it.copy(error = "Enter the $OTP_LENGTH-digit code.") }
+            return
+        }
+        if (!connectivity.isOnline()) {
+            _loginState.update { it.copy(error = "No internet connection.") }
+            return
         }
 
         _loginState.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            val result = authRepository.signIn(state.email, state.password, state.imei)
-            result
-                .onSuccess { email ->
-                    session.userEmail = email
+            authRepository.verifyOtp(state.email, state.code)
+                .onSuccess {
                     _loginState.value = LoginUiState()
                     _loggedIn.value = true
                 }
@@ -107,6 +135,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(loading = false, error = error.message ?: "Sign-in failed.")
                     }
                 }
+        }
+    }
+
+    private fun startResendCountdown(seconds: Int) {
+        if (seconds <= 0) {
+            _loginState.update { it.copy(resendAfter = 0) }
+            return
+        }
+        _loginState.update { it.copy(resendAfter = seconds) }
+        viewModelScope.launch {
+            var remaining = seconds
+            while (remaining > 0) {
+                delay(1_000)
+                remaining--
+                _loginState.update { it.copy(resendAfter = remaining) }
+            }
         }
     }
 
@@ -122,14 +166,18 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             LocationTrackingService.stop(context)
             UpdateNotifier.clear(context)
-            UpdateManager().signOutTester()
-            // Wipes the token, the user details and any location fixes still queued, so
-            // nothing recorded under this session can be uploaded by the next one.
             authRepository.signOutAndWipe()
             TrackerStatus.reset()
             _loginState.value = LoginUiState()
             _loggedIn.value = false
             _loggingOut.value = false
         }
+    }
+
+    private fun isValidEmail(email: String): Boolean =
+        email.isNotBlank() && Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+
+    private companion object {
+        const val OTP_LENGTH = 6
     }
 }

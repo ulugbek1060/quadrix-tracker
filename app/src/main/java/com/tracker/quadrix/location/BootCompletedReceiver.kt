@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.tracker.quadrix.data.SessionManager
+import com.tracker.quadrix.update.UpdateCheckWorker
 
 /**
  * Restarts tracking after a reboot or an app update, but only if the user was tracking when
@@ -23,8 +24,12 @@ class BootCompletedReceiver : BroadcastReceiver() {
             action == ACTION_HTC_QUICKBOOT_POWERON
         if (!isRestartTrigger) return
 
+        // Re-arm the fallback update poll regardless of session state; the worker itself decides
+        // whether to run based on whether tracking is active.
+        UpdateCheckWorker.schedule(context)
+
         val session = SessionManager(context)
-        if (!session.trackingEnabled || session.authToken == null) return
+        if (!session.trackingEnabled || session.accessToken == null) return
 
         LocationTrackingService.start(context)
         TrackerWatchdog.schedule(context)

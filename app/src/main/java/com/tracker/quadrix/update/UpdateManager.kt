@@ -1,16 +1,30 @@
 package com.tracker.quadrix.update
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
-import com.google.firebase.appdistribution.FirebaseAppDistribution
-import com.google.firebase.appdistribution.FirebaseAppDistributionException
-import com.google.firebase.appdistribution.UpdateProgress
-import com.google.firebase.appdistribution.UpdateStatus
+import androidx.core.content.FileProvider
+import com.tracker.quadrix.BuildConfig
+import com.tracker.quadrix.data.api.ApiConfig
+import com.tracker.quadrix.data.api.AppVersionData
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 data class UpdateState(
     val checking: Boolean = false,
+    /** The server's `app_version` when it is newer than the installed one; else null. */
     val availableVersion: String? = null,
     /** When true, a newer build exists and the app blocks until it is installed. */
     val required: Boolean = false,
@@ -19,181 +33,202 @@ data class UpdateState(
 )
 
 /**
- * In-app updates through Firebase App Distribution — this app is not on Play, so this is the
- * only upgrade path for testers.
+ * Firebase-free, self-hosted updater.
  *
- * `updateIfNewReleaseAvailable()` handles the whole flow itself: it checks the backend,
- * shows the "new version available" dialog, downloads the APK and launches the installer.
- * The SDK only sees releases for the same signing key and a higher versionCode, so bump
- * `versionCode` in app/build.gradle.kts for every upload.
+ * [refreshVersion] polls `GET api/tablet/app/version/` for `{ version, download_url }`; whenever
+ * the advertised `version` is newer than the installed [BuildConfig.VERSION_NAME] the update
+ * becomes [UpdateState.required] and the UI blocks the whole app behind ForceUpdateScreen until
+ * [downloadAndInstall] fetches the APK from `download_url` and hands it to the system installer.
+ *
+ * A singleton because the same gate is driven from several places — the launch check, the manual
+ * "check for updates" button, and the background service's periodic poll.
  */
-class UpdateManager {
-
-    /**
-     * Null when the app was built without google-services.json — the SDK cannot initialise
-     * without a Firebase app id, and asking it to would throw on every call.
-     */
-    private val distribution: FirebaseAppDistribution?
-        get() = runCatching { FirebaseAppDistribution.getInstance() }.getOrNull()
+object UpdateManager {
 
     private val _state = MutableStateFlow(UpdateState())
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
-    /** Runs the full check → prompt → download → install flow. Safe to call on every launch. */
-    fun checkAndUpdate() {
-        val distribution = distribution ?: run {
-            _state.value = UpdateState(message = NOT_CONFIGURED)
+    /** The download URL advertised alongside the newest known version. */
+    @Volatile
+    private var pendingApkUrl: String? = null
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    /** The version this build reports; the yardstick every server version is compared against. */
+    val installedVersion: String get() = BuildConfig.VERSION_NAME
+
+    /**
+     * Polls the dedicated version endpoint and updates the gate. Unauthenticated, so it works on
+     * the login screen and from the background alike. Failures are returned, not thrown, so a
+     * network hiccup never locks anyone out.
+     */
+    suspend fun refreshVersion(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = ApiConfig.baseUrl.trimEnd('/') + "/" + ApiConfig.APP_VERSION_PATH
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                val body = response.body?.string().orEmpty()
+                val data = json.decodeFromString(AppVersionData.serializer(), body)
+                onServerVersion(data.version, data.downloadUrl)
+            }
+        }
+    }
+
+    fun beginCheck() {
+        _state.value = _state.value.copy(checking = true, message = null)
+    }
+
+    fun endCheck(message: String? = null) {
+        _state.value = _state.value.copy(checking = false, message = message)
+    }
+
+    /**
+     * Records the version/URL from an API response. Flips the gate to required when [appVersion]
+     * is strictly newer than what is installed; leaves it alone otherwise so a stale-but-equal
+     * response never clears an already-raised gate.
+     */
+    private fun onServerVersion(appVersion: String?, apkUrl: String?) {
+        val server = appVersion?.trim().orEmpty()
+        val newer = server.isNotEmpty() && isNewer(server, installedVersion)
+
+        _state.value = if (newer) {
+            pendingApkUrl = apkUrl?.takeIf { it.isNotBlank() }
+            _state.value.copy(
+                checking = false,
+                required = true,
+                availableVersion = server,
+            )
+        } else {
+            _state.value.copy(checking = false)
+        }
+    }
+
+    /**
+     * Downloads the pending APK to internal storage and launches the system installer. Reports
+     * progress through [UpdateState.downloadPercent]. On Android 8+ the user must allow this app
+     * to install unknown apps first; when that is not yet granted we send them to the right
+     * settings screen rather than failing silently.
+     */
+    suspend fun downloadAndInstall(context: Context) {
+        val url = pendingApkUrl
+        if (url.isNullOrBlank()) {
+            _state.value = _state.value.copy(message = "No download URL was provided by the server.")
             return
         }
-        _state.value = UpdateState(checking = true)
 
-        distribution.updateIfNewReleaseAvailable()
-            .addOnProgressListener { progress -> onProgress(progress) }
-            .addOnCompleteListener {
-                _state.value = _state.value.copy(checking = false)
-            }
-            .addOnFailureListener { error ->
-                val message = when ((error as? FirebaseAppDistributionException)?.errorCode) {
-                    FirebaseAppDistributionException.Status.AUTHENTICATION_CANCELED,
-                    FirebaseAppDistributionException.Status.INSTALLATION_CANCELED,
-                    FirebaseAppDistributionException.Status.UPDATE_NOT_AVAILABLE,
-                        -> null
+        if (!canInstallPackages(context)) {
+            requestInstallPermission(context)
+            _state.value = _state.value.copy(
+                message = "Allow Tracker to install apps, then tap Update again.",
+            )
+            return
+        }
 
-                    FirebaseAppDistributionException.Status.NETWORK_FAILURE ->
-                        "Could not check for updates — no connection."
-
-                    else -> error.message
-                }
-                Log.w(TAG, "Update check failed", error)
-                _state.value = UpdateState(checking = false, message = message)
-            }
-    }
-
-    /**
-     * Mandatory-update check. Every App Distribution release is treated as required: if a
-     * newer build exists, [UpdateState.required] flips to true and the UI blocks the entire app
-     * behind [ForceUpdateScreen] until [startUpdate] installs it.
-     *
-     * "Newer" is the SDK's own rule — same signing key, higher versionCode — so bump
-     * versionCode on every upload. If the app was built without Firebase config, nothing can be
-     * enforced and the app proceeds normally.
-     */
-    fun enforceUpdate() {
-        val distribution = distribution ?: return
-        _state.value = _state.value.copy(checking = true)
-
-        distribution.checkForNewRelease()
-            .addOnSuccessListener { release ->
-                _state.value = if (release != null) {
-                    _state.value.copy(
-                        checking = false,
-                        required = true,
-                        availableVersion = "${release.displayVersion} (${release.versionCode})",
-                    )
-                } else {
-                    _state.value.copy(checking = false, required = false)
-                }
-            }
-            .addOnFailureListener { error ->
-                // A failed check must not lock users out — if we cannot confirm an update is
-                // required, let them through rather than block on a network hiccup.
-                Log.w(TAG, "Required-update check failed", error)
-                _state.value = _state.value.copy(checking = false, required = false)
-            }
-    }
-
-    /**
-     * Downloads and installs the release already found by [enforceUpdate]. The SDK caches the
-     * result of the preceding checkForNewRelease(), so this needs no argument.
-     */
-    fun startUpdate() {
-        val distribution = distribution ?: return
         _state.value = _state.value.copy(downloadPercent = 0, message = null)
 
-        distribution.updateApp()
-            .addOnProgressListener { progress -> onProgress(progress) }
-            .addOnFailureListener { error ->
-                Log.w(TAG, "Forced update failed", error)
+        val apk = runCatching { withContext(Dispatchers.IO) { download(context, url) } }
+            .getOrElse { error ->
+                Log.w(TAG, "APK download failed", error)
                 _state.value = _state.value.copy(
                     downloadPercent = null,
-                    message = "Update failed — check your connection and try again.",
+                    message = "Download failed — check your connection and try again.",
                 )
+                return
             }
+
+        _state.value = _state.value.copy(downloadPercent = 100)
+        launchInstaller(context, apk)
     }
 
-    /** Checks without prompting, so the main screen can show that a version is waiting. */
-    fun checkOnly() {
-        val distribution = distribution ?: run {
-            _state.value = UpdateState(message = NOT_CONFIGURED)
-            return
-        }
-        _state.value = _state.value.copy(checking = true)
+    private fun download(context: Context, url: String): File {
+        val dir = File(context.cacheDir, UPDATE_DIR).apply { mkdirs() }
+        // A fixed name (rather than per-version) means a re-download overwrites the last attempt
+        // instead of piling up half-finished APKs in the cache.
+        val target = File(dir, "tracker-update.apk")
 
-        distribution.checkForNewRelease()
-            .addOnSuccessListener { release ->
-                _state.value = UpdateState(
-                    checking = false,
-                    availableVersion = release?.let { "${it.displayVersion} (${it.versionCode})" },
-                )
+        val request = Request.Builder().url(url).build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("HTTP ${response.code}")
             }
-            .addOnFailureListener { error ->
-                Log.w(TAG, "Release check failed", error)
-                _state.value = UpdateState(checking = false, message = error.message)
-            }
-    }
-
-    private fun onProgress(progress: UpdateProgress) {
-        when (progress.updateStatus) {
-            UpdateStatus.DOWNLOADING -> {
-                val total = progress.apkFileTotalBytes
-                val percent = if (total > 0) {
-                    (progress.apkBytesDownloaded * 100 / total).toInt()
-                } else {
-                    0
+            val body = response.body ?: throw IOException("Empty body")
+            val total = body.contentLength()
+            var downloaded = 0L
+            body.byteStream().use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        if (total > 0) {
+                            val percent = (downloaded * 100 / total).toInt().coerceIn(0, 99)
+                            _state.value = _state.value.copy(downloadPercent = percent)
+                        }
+                    }
                 }
-                _state.value = _state.value.copy(downloadPercent = percent, message = null)
             }
+        }
+        return target
+    }
 
-            UpdateStatus.DOWNLOADED ->
-                _state.value = _state.value.copy(downloadPercent = 100)
-
-            UpdateStatus.DOWNLOAD_FAILED ->
+    private fun launchInstaller(context: Context, apk: File) {
+        val uri: Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            apk,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+            .onFailure { error ->
+                Log.w(TAG, "Could not launch installer", error)
                 _state.value = _state.value.copy(
                     downloadPercent = null,
-                    message = "Download failed.",
+                    message = "Could not open the installer.",
                 )
+            }
+    }
 
-            else -> Unit
+    private fun canInstallPackages(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+
+    private fun requestInstallPermission(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onFailure { Log.w(TAG, "No unknown-sources settings screen", it) }
+    }
+
+    /** True when dotted-numeric [server] ("2.3.4") is strictly greater than [installed]. */
+    private fun isNewer(server: String, installed: String): Boolean {
+        val a = server.split(".").map { it.trim().toIntOrNull() ?: 0 }
+        val b = installed.split(".").map { it.trim().toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val x = a.getOrElse(i) { 0 }
+            val y = b.getOrElse(i) { 0 }
+            if (x != y) return x > y
         }
+        return false
     }
 
-    /**
-     * One-shot check for use from the background service. Reports whether a newer release
-     * exists, without touching [state] — the service turns a positive result into a
-     * notification. Requires the tester to have signed in previously; if not, or if Firebase is
-     * absent, it simply reports "no update".
-     */
-    fun checkForUpdate(onResult: (available: Boolean, version: String?) -> Unit) {
-        val distribution = distribution ?: return onResult(false, null)
-        distribution.checkForNewRelease()
-            .addOnSuccessListener { release ->
-                onResult(
-                    release != null,
-                    release?.let { "${it.displayVersion} (${it.versionCode})" },
-                )
-            }
-            .addOnFailureListener { error ->
-                Log.i(TAG, "Background update check failed: ${error.message}")
-                onResult(false, null)
-            }
-    }
-
-    fun signOutTester() {
-        runCatching { distribution?.signOutTester() }
-    }
-
-    private companion object {
-        const val TAG = "UpdateManager"
-        const val NOT_CONFIGURED = "Updates unavailable — this build has no Firebase config."
-    }
+    private const val TAG = "UpdateManager"
+    private const val UPDATE_DIR = "updates"
 }

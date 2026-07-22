@@ -37,6 +37,7 @@ import com.tracker.quadrix.ui.MainViewModel
 import com.tracker.quadrix.ui.PermissionGateScreen
 import com.tracker.quadrix.ui.PermissionStep
 import com.tracker.quadrix.ui.theme.TrackerTheme
+import com.tracker.quadrix.update.UpdateCheckWorker
 
 class MainActivity : ComponentActivity() {
 
@@ -47,9 +48,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Mandatory-update check on every launch. If a newer build exists on App Distribution,
-        // the whole app is blocked behind the force-update gate until it is installed.
+        // Mandatory-update check on every launch. If the backend advertises a newer app_version,
+        // the whole app is blocked behind the force-update gate until the APK is installed.
         mainViewModel.enforceUpdate()
+
+        // Background fallback that polls for updates while tracking is off (the tracking service
+        // covers the tracking-on case). KEEP makes this a no-op once scheduled.
+        UpdateCheckWorker.schedule(this)
 
         setContent {
             TrackerTheme {
@@ -76,13 +81,12 @@ class MainActivity : ComponentActivity() {
                         LoginScreen(
                             state = loginState,
                             online = online,
-                            imeiReadOnly = authViewModel.imeiReadOnly,
-                            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
                             onEmailChange = authViewModel::onEmailChange,
-                            onPasswordChange = authViewModel::onPasswordChange,
-                            onImeiChange = authViewModel::onImeiChange,
-                            onSignIn = authViewModel::signIn,
-                            onUseTestAccount = authViewModel::useTestAccount,
+                            onCodeChange = authViewModel::onCodeChange,
+                            onRequestOtp = authViewModel::requestOtp,
+                            onVerifyOtp = authViewModel::verifyOtp,
+                            onResendOtp = authViewModel::resendOtp,
+                            onChangeEmail = authViewModel::changeEmail,
                             modifier = Modifier.padding(innerPadding),
                         )
                     }
