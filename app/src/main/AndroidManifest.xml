@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Yields an IMEI on Android 9 and below, or on a device-owner (MDM) / platform-signed
+         fleet tablet. Left uncapped so a device-owner deployment on newer Android can hold it;
+         on an ordinary Android 10+ install the read fails and the IMEI is entered by hand. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <uses-feature
         android:name="android.hardware.location.gps"

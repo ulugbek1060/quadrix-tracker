@@ -30,8 +30,11 @@ import androidx.compose.ui.unit.dp
 fun LoginScreen(
     state: LoginUiState,
     online: Boolean,
+    imeiReadOnly: Boolean,
+    imeiUnavailableReason: String?,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
+    onImeiChange: (String) -> Unit,
     onSignIn: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -84,6 +87,33 @@ fun LoginScreen(
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
+                imeAction = if (imeiReadOnly) ImeAction.Done else ImeAction.Next,
+            ),
+            keyboardActions = KeyboardActions(onDone = { onSignIn() }),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = state.imei,
+            onValueChange = onImeiChange,
+            label = { Text("IMEI") },
+            singleLine = true,
+            readOnly = imeiReadOnly,
+            enabled = !state.loading,
+            supportingText = {
+                Text(
+                    if (imeiReadOnly) {
+                        "Read from the device."
+                    } else {
+                        "Dial *#06# on this tablet and type the IMEI in. " +
+                            (imeiUnavailableReason ?: "")
+                    }
+                )
+            },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done,
             ),
             keyboardActions = KeyboardActions(onDone = { onSignIn() }),

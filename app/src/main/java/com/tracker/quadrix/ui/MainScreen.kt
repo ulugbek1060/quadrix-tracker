@@ -45,6 +45,8 @@ import java.util.Locale
 fun MainScreen(
     email: String?,
     deviceId: String,
+    imei: String?,
+    imeiUnavailableReason: String?,
     online: Boolean,
     tracker: TrackerState,
     loggingOut: Boolean,
@@ -76,6 +78,8 @@ fun MainScreen(
             StatusCard(
                 email = email,
                 deviceId = deviceId,
+                imei = imei,
+                imeiUnavailableReason = imeiUnavailableReason,
                 online = online,
                 tracker = tracker,
             )
@@ -114,6 +118,8 @@ fun MainScreen(
 private fun StatusCard(
     email: String?,
     deviceId: String,
+    imei: String?,
+    imeiUnavailableReason: String?,
     online: Boolean,
     tracker: TrackerState,
 ) {
@@ -148,6 +154,7 @@ private fun StatusCard(
             InfoRow("Interval", "Every $trackingIntervalMinutes minutes")
             InfoRow("Internet", if (online) "Connected" else "No connection")
             InfoRow("Device ID", deviceId)
+            InfoRow("IMEI", imei ?: "Not available")
             InfoRow("App version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             InfoRow(
                 "Queued uploads",
@@ -160,6 +167,16 @@ private fun StatusCard(
                 Text(
                     text = "Offline — fixes are stored on the device and sent automatically " +
                         "once the connection is back.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (imei == null && imeiUnavailableReason != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "IMEI: $imeiUnavailableReason. Enter it at login, or provision the " +
+                        "tablet as device owner (MDM) to read it automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

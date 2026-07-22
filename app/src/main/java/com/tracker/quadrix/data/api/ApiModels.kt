@@ -17,6 +17,14 @@ data class DeviceInfo(
      * resets only on factory reset. This is the device identity the backend should key on.
      */
     @SerialName("device_id") val deviceId: String,
+    /**
+     * Read from the platform on device-owner / platform-signed / carrier-privileged devices
+     * (Android 9 and below too), otherwise whatever the operator typed in at login. Null when
+     * neither is available.
+     */
+    @SerialName("imei") val imei: String? = null,
+    /** "platform", "manual" or "unavailable" — so the server knows how far to trust [imei]. */
+    @SerialName("imei_source") val imeiSource: String = "unavailable",
     @SerialName("manufacturer") val manufacturer: String,
     @SerialName("model") val model: String,
     @SerialName("os_version") val osVersion: String,

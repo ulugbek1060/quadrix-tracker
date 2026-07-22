@@ -17,6 +17,8 @@ import kotlinx.coroutines.launch
 data class LoginUiState(
     val email: String = "",
     val password: String = "",
+    /** Editable only when the platform will not report an IMEI itself. */
+    val imei: String = "",
     val loading: Boolean = false,
     val error: String? = null,
 )
@@ -31,7 +33,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _loggedIn = MutableStateFlow(authRepository.isLoggedIn)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
 
-    private val _loginState = MutableStateFlow(LoginUiState())
+    private val _loginState = MutableStateFlow(
+        LoginUiState(imei = authRepository.imei.orEmpty())
+    )
     val loginState: StateFlow<LoginUiState> = _loginState.asStateFlow()
 
     private val _loggingOut = MutableStateFlow(false)
@@ -42,10 +46,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     /** Shown on the main screen so the ID registered with the backend can be read off. */
     val deviceId: String get() = authRepository.deviceId
 
+    val imei: String? get() = authRepository.imei
+
+    /** True when the platform gave us a real IMEI, so the field must not be edited. */
+    val imeiReadOnly: Boolean get() = authRepository.imeiIsFromPlatform
+
+    val imeiUnavailableReason: String? get() = authRepository.imeiUnavailableReason
+
     fun onEmailChange(value: String) = _loginState.update { it.copy(email = value, error = null) }
 
     fun onPasswordChange(value: String) =
         _loginState.update { it.copy(password = value, error = null) }
+
+    /** Digits only — an IMEI is 15 digits, and operators habitually paste in spaces. */
+    fun onImeiChange(value: String) = _loginState.update {
+        it.copy(imei = value.filter(Char::isDigit).take(17), error = null)
+    }
 
     fun signIn() {
         val state = _loginState.value
@@ -70,7 +86,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
         _loginState.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            val result = authRepository.signIn(state.email, state.password)
+            val result = authRepository.signIn(state.email, state.password, state.imei)
             result
                 .onSuccess { email ->
                     session.userEmail = email

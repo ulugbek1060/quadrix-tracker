@@ -58,8 +58,11 @@ class MainActivity : ComponentActivity() {
                         LoginScreen(
                             state = loginState,
                             online = online,
+                            imeiReadOnly = authViewModel.imeiReadOnly,
+                            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
                             onEmailChange = authViewModel::onEmailChange,
                             onPasswordChange = authViewModel::onPasswordChange,
+                            onImeiChange = authViewModel::onImeiChange,
                             onSignIn = authViewModel::signIn,
                             modifier = Modifier.padding(innerPadding),
                         )
@@ -148,6 +151,8 @@ class MainActivity : ComponentActivity() {
         MainScreen(
             email = authViewModel.userEmail,
             deviceId = authViewModel.deviceId,
+            imei = authViewModel.imei,
+            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
             online = online,
             tracker = tracker,
             loggingOut = loggingOut,
@@ -168,6 +173,11 @@ class MainActivity : ComponentActivity() {
     private fun foregroundPermissions(): Array<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        // Only worth prompting where it can actually yield an IMEI (Android 9-). On 10+ the
+        // permission grants nothing to a non-device-owner app, so asking would gain nothing.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            add(Manifest.permission.READ_PHONE_STATE)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
         }
