@@ -4,26 +4,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.google.services) apply false
-    alias(libs.plugins.firebase.appdistribution)
 }
 
-// Firebase is only used for App Distribution updates, so a missing google-services.json must
-// not stop the app from building — otherwise nothing is testable until the Firebase project
-// exists. UpdateManager degrades gracefully when Firebase is absent at runtime.
-val hasFirebaseConfig = project.file("google-services.json").exists()
-if (hasFirebaseConfig) {
-    apply(plugin = "com.google.gms.google-services")
-} else {
-    logger.lifecycle(
-        "Tracker: app/google-services.json not found — building without Firebase. " +
-            "In-app updates will be unavailable in this build."
-    )
-}
-
-// Optional release keystore. Create `keystore.properties` in the project root with
-// storeFile / storePassword / keyAlias / keyPassword to sign the builds you upload to
-// Firebase App Distribution. Without it, release builds fall back to the debug key.
+// Release keystore. Create `keystore.properties` in the project root with
+// storeFile / storePassword / keyAlias / keyPassword. On Play, this is the upload key you sign
+// the App Bundle with. Without it, release builds fall back to the debug key.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
@@ -88,14 +73,6 @@ android {
     }
 }
 
-// `./gradlew assembleRelease appDistributionUploadRelease` builds and ships a new version.
-// Testers are notified in the App Distribution app; the in-app SDK check lives in UpdateManager.
-firebaseAppDistributionDefault {
-    artifactType = "APK"
-    groups = "testers"
-    releaseNotesFile = "release-notes.txt"
-}
-
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -107,11 +84,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-
-    // Firebase is used for one thing only: shipping new versions to testers.
-    // The API artifact is a no-op stub; the full SDK is what actually performs the update.
-    implementation(libs.firebase.appdistribution.api)
-    implementation(libs.firebase.appdistribution)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)

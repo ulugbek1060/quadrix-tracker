@@ -1,7 +1,6 @@
 package com.tracker.quadrix
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -32,7 +31,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tracker.quadrix.ui.AuthViewModel
 import com.tracker.quadrix.ui.LoginScreen
 import com.tracker.quadrix.ui.MainScreen
-import com.tracker.quadrix.ui.ForceUpdateScreen
 import com.tracker.quadrix.ui.MainViewModel
 import com.tracker.quadrix.ui.PermissionGateScreen
 import com.tracker.quadrix.ui.PermissionStep
@@ -47,24 +45,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Mandatory-update check on every launch. If a newer build exists on App Distribution,
-        // the whole app is blocked behind the force-update gate until it is installed.
-        mainViewModel.enforceUpdate()
-
         setContent {
             TrackerTheme {
-                val update by mainViewModel.updateState.collectAsStateWithLifecycle()
-                if (update.required) {
-                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                        ForceUpdateScreen(
-                            update = update,
-                            onUpdate = mainViewModel::startForcedUpdate,
-                            modifier = Modifier.padding(innerPadding),
-                        )
-                    }
-                    return@TrackerTheme
-                }
-
                 val loggedIn by authViewModel.loggedIn.collectAsStateWithLifecycle()
                 val online by mainViewModel.online.collectAsStateWithLifecycle()
 
@@ -76,13 +58,9 @@ class MainActivity : ComponentActivity() {
                         LoginScreen(
                             state = loginState,
                             online = online,
-                            imeiReadOnly = authViewModel.imeiReadOnly,
-                            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
                             onEmailChange = authViewModel::onEmailChange,
                             onPasswordChange = authViewModel::onPasswordChange,
-                            onImeiChange = authViewModel::onImeiChange,
                             onSignIn = authViewModel::signIn,
-                            onUseTestAccount = authViewModel::useTestAccount,
                             modifier = Modifier.padding(innerPadding),
                         )
                     }
@@ -94,7 +72,6 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun MainRoute(online: Boolean) {
         val tracker by mainViewModel.trackerState.collectAsStateWithLifecycle()
-        val update by mainViewModel.updateState.collectAsStateWithLifecycle()
         val permissions by mainViewModel.permissions.collectAsStateWithLifecycle()
         val loggingOut by authViewModel.loggingOut.collectAsStateWithLifecycle()
 
@@ -141,14 +118,6 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
 
-        // Kick off the first foreground prompt automatically, so an already-permissioned device
-        // sails straight through without a tap.
-        LaunchedEffect(step) {
-            if (step == PermissionStep.REQUEST_FOREGROUND && !foregroundBlocked) {
-                foregroundLauncher.launch(foregroundPermissions())
-            }
-        }
-
         if (step != null) {
             PermissionGateScreen(
                 step = step,
@@ -175,32 +144,13 @@ class MainActivity : ComponentActivity() {
         }
 
         // All-time location is in place: tracking is guaranteed to have been started by
-        // refreshPermissions(). What remains is the battery-optimisation nudge.
-        var batteryOptimised by remember { mutableStateOf(mainViewModel.isBatteryOptimised()) }
-        DisposableEffect(lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) {
-                    batteryOptimised = mainViewModel.isBatteryOptimised()
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-        }
-
+        // refreshPermissions().
         MainScreen(
             email = authViewModel.userEmail,
             deviceId = authViewModel.deviceId,
-            imei = authViewModel.imei,
-            imeiUnavailableReason = authViewModel.imeiUnavailableReason,
             online = online,
             tracker = tracker,
-            update = update,
-            permissionsGranted = true,
-            batteryOptimised = batteryOptimised,
             loggingOut = loggingOut,
-            onGrantPermissions = { foregroundLauncher.launch(foregroundPermissions()) },
-            onDisableBatteryOptimisation = ::requestIgnoreBatteryOptimisations,
-            onCheckForUpdates = mainViewModel::checkForUpdates,
             onLogout = authViewModel::logout,
         )
     }
@@ -215,30 +165,8 @@ class MainActivity : ComponentActivity() {
             .onFailure { Log.w("MainActivity", "Could not open app settings", it) }
     }
 
-    /**
-     * Opens the system prompt to exempt the app from battery optimisation. Falls back to the
-     * settings list, since some OEM ROMs do not implement the direct-request intent.
-     */
-    @SuppressLint("BatteryLife")
-    private fun requestIgnoreBatteryOptimisations() {
-        val direct = Intent(
-            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            Uri.parse("package:$packageName"),
-        )
-        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-
-        runCatching { startActivity(direct) }
-            .recoverCatching { startActivity(fallback) }
-            .onFailure { Log.w("MainActivity", "No battery optimisation settings screen", it) }
-    }
-
     private fun foregroundPermissions(): Array<String> = buildList {
         add(Manifest.permission.ACCESS_FINE_LOCATION)
-        // Only worth prompting for where it can actually yield an IMEI. On Android 10+ the
-        // permission grants nothing extra, so asking would cost a prompt and gain nothing.
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            add(Manifest.permission.READ_PHONE_STATE)
-        }
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)

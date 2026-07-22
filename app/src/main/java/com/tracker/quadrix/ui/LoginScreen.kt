@@ -13,10 +13,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,19 +25,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.tracker.quadrix.data.TestAccount
 
 @Composable
 fun LoginScreen(
     state: LoginUiState,
     online: Boolean,
-    imeiReadOnly: Boolean,
-    imeiUnavailableReason: String?,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
-    onImeiChange: (String) -> Unit,
     onSignIn: () -> Unit,
-    onUseTestAccount: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -91,34 +84,6 @@ fun LoginScreen(
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
-                imeAction = if (imeiReadOnly) ImeAction.Done else ImeAction.Next,
-            ),
-            keyboardActions = KeyboardActions(onDone = { onSignIn() }),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = state.imei,
-            onValueChange = onImeiChange,
-            label = { Text("IMEI") },
-            singleLine = true,
-            readOnly = imeiReadOnly,
-            enabled = !state.loading,
-            supportingText = {
-                Text(
-                    if (imeiReadOnly) {
-                        "Read from the device."
-                    } else {
-                        // Being explicit beats an empty field the operator assumes is a bug.
-                        "Dial *#06# on this device and type the IMEI in. " +
-                            (imeiUnavailableReason ?: "")
-                    }
-                )
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done,
             ),
             keyboardActions = KeyboardActions(onDone = { onSignIn() }),
@@ -149,9 +114,7 @@ fun LoginScreen(
 
         Button(
             onClick = onSignIn,
-            // The debug test account works offline, so the button must stay live without a
-            // connection in debug builds.
-            enabled = !state.loading && (online || TestAccount.available),
+            enabled = !state.loading && online,
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (state.loading) {
@@ -162,30 +125,6 @@ fun LoginScreen(
                 )
             } else {
                 Text("Sign in")
-            }
-        }
-
-        if (TestAccount.available) {
-            Spacer(Modifier.height(24.dp))
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Debug build — test account",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "${TestAccount.EMAIL} / ${TestAccount.PASSWORD}\n" +
-                            "Works offline and stubs out uploads. Not present in release builds.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = onUseTestAccount,
-                        enabled = !state.loading,
-                    ) { Text("Fill in test account") }
-                }
             }
         }
     }

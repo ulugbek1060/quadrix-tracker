@@ -19,38 +19,21 @@ class AuthRepository(context: Context) {
     val currentUserEmail: String? get() = session.userEmail
     val deviceId: String get() = identity.deviceId
 
-    /** Platform-reported IMEI if obtainable, else the one entered at login, else null. */
-    val imei: String? get() = identity.autoImei ?: session.manualImei?.takeIf { it.isNotBlank() }
-
-    val imeiIsFromPlatform: Boolean get() = identity.autoImei != null
-    val imeiUnavailableReason: String? get() = identity.imeiUnavailableReason
-
     /**
      * Signs in and registers this device in the same call — the backend gets the device
-     * identity (ANDROID_ID, model, OS, app version, and IMEI where the platform still allows
-     * it) so it can tell which phone or tablet the session belongs to.
+     * identity (ANDROID_ID, model, OS, app version) so it can tell which device the session
+     * belongs to.
      */
     suspend fun signIn(
         email: String,
         password: String,
-        manualImei: String? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
-        session.manualImei = manualImei?.trim()?.takeIf { it.isNotBlank() }
-
-        // Debug-only shortcut: no network, no backend needed. See TestAccount.
-        if (TestAccount.matches(email, password)) {
-            session.authToken = TestAccount.TOKEN
-            session.userId = "test-user"
-            session.userEmail = TestAccount.EMAIL
-            return@withContext Result.success(TestAccount.EMAIL)
-        }
-
         runCatching {
             val response = api.login(
                 LoginRequest(
                     email = email.trim(),
                     password = password,
-                    device = identity.toDeviceInfo(manualImei = session.manualImei),
+                    device = identity.toDeviceInfo(),
                 )
             )
 

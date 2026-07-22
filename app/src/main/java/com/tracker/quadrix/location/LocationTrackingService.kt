@@ -28,8 +28,6 @@ import com.tracker.quadrix.data.ConnectivityObserver
 import com.tracker.quadrix.data.LocationRepository
 import com.tracker.quadrix.data.SessionManager
 import com.tracker.quadrix.data.UploadResult
-import com.tracker.quadrix.update.UpdateManager
-import com.tracker.quadrix.update.UpdateNotifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -54,11 +52,7 @@ class LocationTrackingService : Service() {
     private val repository by lazy { LocationRepository(this) }
     private val connectivity by lazy { ConnectivityObserver(this) }
     private val session by lazy { SessionManager(this) }
-    private val updateManager by lazy { UpdateManager() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    /** Throttles the background update check to [UPDATE_CHECK_INTERVAL_MS], not every fix. */
-    private var lastUpdateCheckAt = 0L
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -145,27 +139,6 @@ class LocationTrackingService : Service() {
         // apart from the single static notification the platform requires a background location
         // service to display.
         scope.launch { flush() }
-
-        maybeCheckForUpdate()
-    }
-
-    /**
-     * Checks App Distribution for a newer build while the app is in the background and, if one
-     * is found, posts the "update required" notification. Opening the app from there hits the
-     * launch-time mandatory-update gate. Throttled so it runs at most once per interval.
-     */
-    private fun maybeCheckForUpdate() {
-        val now = System.currentTimeMillis()
-        if (now - lastUpdateCheckAt < UPDATE_CHECK_INTERVAL_MS) return
-        lastUpdateCheckAt = now
-
-        updateManager.checkForUpdate { available, version ->
-            if (available) {
-                UpdateNotifier.notifyUpdateAvailable(this, version)
-            } else {
-                UpdateNotifier.clear(this)
-            }
-        }
     }
 
     private suspend fun flush() {
@@ -263,9 +236,6 @@ class LocationTrackingService : Service() {
 
         /** The 5-minute reporting cadence. */
         const val INTERVAL_MS = 5 * 60 * 1000L
-
-        /** How often the background service polls App Distribution for a mandatory update. */
-        private const val UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
 
         fun start(context: Context) {
             SessionManager(context).trackingEnabled = true

@@ -59,13 +59,19 @@ fun PermissionGateScreen(
 
         Text(
             text = when (step) {
+                // Prominent disclosure required by Google Play before requesting location:
+                // states what is collected, that it happens in the background, and why.
                 PermissionStep.REQUEST_FOREGROUND ->
-                    "Tracker records this device's location. Grant location access to continue."
+                    "Tracker collects this device's location — including in the background, even " +
+                        "when the app is closed — and sends it to your organisation's server so " +
+                        "your location can be monitored. Location is collected only while you " +
+                        "are signed in, and stops when you log out. Grant location access to " +
+                        "continue."
 
                 PermissionStep.REQUEST_BACKGROUND ->
-                    "Tracker must keep recording location while the app is closed. On the next " +
-                        "screen choose “Allow all the time” — anything less stops " +
-                        "tracking the moment the app leaves the screen."
+                    "To keep recording while the app is closed, Android needs location set to " +
+                        "“Allow all the time”. On the next screen choose “Allow all the " +
+                        "time” — anything less stops tracking when the app leaves the screen."
 
                 PermissionStep.OPEN_SETTINGS ->
                     "Location is not set to “Allow all the time”. Open Settings → " +

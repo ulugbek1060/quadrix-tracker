@@ -56,14 +56,7 @@ class LocationRepository(context: Context) {
     fun clear() = queue.clear()
 
     suspend fun flush(): UploadResult = flushLock.withLock {
-        val token = session.authToken
-            ?: return@withLock UploadResult.Unauthorized("Not signed in")
-
-        // Debug test account: pretend the server accepted the batch, so the whole flow can be
-        // exercised without a backend.
-        if (TestAccount.isActiveSession(token)) {
-            return@withLock drainAsTestSession()
-        }
+        session.authToken ?: return@withLock UploadResult.Unauthorized("Not signed in")
 
         if (!connectivity.isOnline()) {
             return@withLock UploadResult.Offline
@@ -103,20 +96,6 @@ class LocationRepository(context: Context) {
         } else {
             UploadResult.NothingToSend
         }
-    }
-
-    private fun drainAsTestSession(): UploadResult {
-        val pending = queue.peek(Int.MAX_VALUE)
-        if (pending.isEmpty()) return UploadResult.NothingToSend
-
-        pending.forEach { fix ->
-            Log.i(TAG, "TEST MODE — would POST ${fix.latitude}, ${fix.longitude} @ ${fix.recordedAt}")
-        }
-        queue.removeFirst(pending.size)
-
-        session.lastUploadAt = System.currentTimeMillis()
-        session.uploadCount += pending.size
-        return UploadResult.Sent(pending.size)
     }
 
     private companion object {

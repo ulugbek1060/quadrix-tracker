@@ -7,12 +7,4 @@
     <string name="notification_channel_description">Keeps location reporting running</string>
     <string name="notification_title">Location service active</string>
     <string name="notification_text_waiting">Running</string>
-
-    <!-- Update-available notification, posted from the background service. Unlike the tracking
-         notification this one is meant to be noticed. -->
-    <string name="update_channel_name">App updates</string>
-    <string name="update_channel_description">Notifies when a new version must be installed</string>
-    <string name="update_notification_title">Update required</string>
-    <string name="update_notification_text">A new version is required. Tap to update.</string>
-    <string name="update_notification_text_versioned">Version %1$s is required. Tap to update.</string>
 </resources>
