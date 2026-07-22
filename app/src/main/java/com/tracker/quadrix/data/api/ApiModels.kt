@@ -107,6 +107,7 @@ data class LocationUploadBody(
 @Serializable
 data class LocationUploadData(
     @SerialName("device_id") val deviceId: String? = null,
+    @SerialName("app_version") val appVersion: String? = null,
 )
 
 // ---- token/refresh ----

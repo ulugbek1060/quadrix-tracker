@@ -8,6 +8,7 @@ import com.tracker.quadrix.data.api.LocationPayload
 import com.tracker.quadrix.data.api.LocationUploadBody
 import com.tracker.quadrix.data.api.SessionExpiredException
 import com.tracker.quadrix.data.api.TrackerApi
+import com.tracker.quadrix.update.UpdateManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -77,7 +78,7 @@ class LocationRepository(context: Context) {
         while (true) {
             val fix = queue.peek(1).firstOrNull() ?: break
 
-            try {
+            val response = try {
                 api.uploadLocation(
                     LocationUploadBody(
                         deviceId = identity.deviceId,
@@ -103,6 +104,11 @@ class LocationRepository(context: Context) {
                 Log.w(TAG, "Upload failed", e)
                 return@withLock UploadResult.Failed(e.message ?: "Network error")
             }
+
+            // The upload response carries the current app version. Feed it to the update gate so
+            // a new release is caught on every upload (foreground → force-update screen,
+            // background → notification), without a separate poll.
+            response.appVersion?.let { UpdateManager.onServerVersion(it, apkUrl = null) }
 
             queue.removeFirst(1)
             sent++

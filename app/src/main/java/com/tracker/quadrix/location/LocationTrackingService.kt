@@ -1,6 +1,7 @@
 package com.tracker.quadrix.location
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -22,6 +23,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.tracker.quadrix.MainActivity
 import com.tracker.quadrix.R
 import com.tracker.quadrix.data.ConnectivityObserver
@@ -58,6 +60,9 @@ class LocationTrackingService : Service() {
 
     /** Throttles the background version poll to [VERSION_CHECK_INTERVAL_MS], not every fix. */
     private var lastVersionCheckAt = 0L
+
+    /** Cancels the one-shot fresh-location request in [requestFreshLocationOnce] on teardown. */
+    private var currentLocationCancellation: CancellationTokenSource? = null
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -106,12 +111,38 @@ class LocationTrackingService : Service() {
         }
 
         startLocationUpdates()
+        sendFirstLocationImmediately()
         session.trackingEnabled = true
         TrackerStatus.setRunning(true)
         TrackerStatus.setPending(repository.pendingCount())
         TrackerWatchdog.schedule(this)
 
         return START_STICKY
+    }
+
+    /**
+     * The periodic request above only calls back on its own schedule, which could be minutes
+     * away — not good enough for "a location goes out right after login". Instead, ask for a
+     * fix right now: the last cached location if the platform has a recent one, or a one-shot
+     * fresh fix otherwise. Runs on every service start (login, watchdog restart, reboot), which
+     * is harmless — an extra fix a few minutes early costs nothing.
+     */
+    @SuppressLint("MissingPermission")
+    private fun sendFirstLocationImmediately() {
+        fusedClient.lastLocation
+            .addOnSuccessListener { location ->
+                if (location != null) handleLocation(location) else requestFreshLocationOnce()
+            }
+            .addOnFailureListener { requestFreshLocationOnce() }
+    }
+
+    /** Falls back to an active single fix when there is no cached last-known location. */
+    @SuppressLint("MissingPermission")
+    private fun requestFreshLocationOnce() {
+        val cancellation = CancellationTokenSource().also { currentLocationCancellation = it }
+        fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
+            .addOnSuccessListener { location -> location?.let { handleLocation(it) } }
+            .addOnFailureListener { e -> Log.w(TAG, "Could not get an immediate location fix", e) }
     }
 
     private fun startLocationUpdates() {
@@ -194,6 +225,7 @@ class LocationTrackingService : Service() {
 
     override fun onDestroy() {
         fusedClient.removeLocationUpdates(locationCallback)
+        currentLocationCancellation?.cancel()
         scope.cancel()
         TrackerStatus.setRunning(false)
         // trackingEnabled is deliberately left alone: if the system killed us, the watchdog

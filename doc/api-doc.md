@@ -97,7 +97,8 @@ resopnse
 {
 "status": "success",
 "data": {
-"device_id": "8f57eb16-2433-4ee5-a25d-b4801f58ca89"
+"device_id": "8f57eb16-2433-4ee5-a25d-b4801f58ca89",
+"app_version": "2.3.4"
 },
 "message": "Tablet location updated.",
 "errors": null

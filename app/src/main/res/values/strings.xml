@@ -12,7 +12,7 @@
          notification this one is meant to be noticed. -->
     <string name="update_channel_name">App updates</string>
     <string name="update_channel_description">Notifies when a new version must be installed</string>
-    <string name="update_notification_title">Update required</string>
-    <string name="update_notification_text">A new version is required. Tap to update.</string>
-    <string name="update_notification_text_versioned">Version %1$s is required. Tap to update.</string>
+    <string name="update_notification_title">New version available</string>
+    <string name="update_notification_text">A new version of Tracker is available. Tap to update.</string>
+    <string name="update_notification_text_versioned">Tracker %1$s is available. Tap to update.</string>
 </resources>

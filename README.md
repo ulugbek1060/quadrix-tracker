@@ -35,7 +35,7 @@ GET  {base}api/tablet/auth/me/             Authorization: Bearer <access>
 
 POST {base}api/tablet/location/            Authorization: Bearer <access>
   { device_id, latitude, longitude, heading, speed }
-  → data: { device_id }
+  → data: { device_id, app_version }        (no apk_url — see update section below)
 
 POST {base}api/token/refresh/              { refresh }
   → { access }   (accepted at the root or inside data)

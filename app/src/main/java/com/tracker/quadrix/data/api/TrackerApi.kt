@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
@@ -107,19 +108,48 @@ class TrackerApi(
 
     suspend fun uploadLocation(body: LocationUploadBody): LocationUploadData =
         withContext(Dispatchers.IO) {
-            decode(
-                post(ApiConfig.LOCATION_PATH, json.encodeToString(body), authenticated = true),
-                LocationUploadData.serializer(),
-            )
+            // post() throws on any non-2xx, so reaching here means the fix was accepted. The
+            // response body drives the update check, so parse it tolerantly rather than through
+            // the strict envelope decoder — the endpoint currently returns a bare
+            // {"version":"…"} instead of the documented {"status","data":{…}} envelope.
+            val responseBody =
+                post(ApiConfig.LOCATION_PATH, json.encodeToString(body), authenticated = true)
+            parseLocationResponse(responseBody)
         }
+
+    /**
+     * Extracts device id / app version from a location upload response, accepting either the
+     * documented envelope (`data.app_version`) or the bare `{"version":"…"}` the backend sends
+     * today. Never throws on a 2xx body — an unrecognised shape just yields an empty result.
+     */
+    internal fun parseLocationResponse(responseBody: String): LocationUploadData {
+        val root = runCatching { json.parseToJsonElement(responseBody).jsonObject }.getOrNull()
+            ?: return LocationUploadData()
+        val data = root["data"] as? JsonObject
+        val version = root["version"]?.jsonPrimitive?.contentOrNull()
+            ?: data?.get("app_version")?.jsonPrimitive?.contentOrNull()
+            ?: data?.get("version")?.jsonPrimitive?.contentOrNull()
+        val deviceId = data?.get("device_id")?.jsonPrimitive?.contentOrNull()
+        return LocationUploadData(deviceId = deviceId, appVersion = version)
+    }
 
     // ---- envelope handling ----
 
     /** Unwraps the envelope and returns the `data`, or fails if the server sent none. */
     private fun <T> decode(responseBody: String, serializer: KSerializer<T>): T {
         val envelope = json.decodeFromString(ApiEnvelope.serializer(serializer), responseBody)
-        return envelope.data
-            ?: throw ApiException(-1, envelope.message ?: "Empty response from server")
+        val data = envelope.data
+        if (data != null) return data
+
+        // If the server says "success" but omitted the "data" payload (common if it's just a
+        // confirmation), try to satisfy T with an empty object. This works if all fields in T
+        // are optional, which is true for things like LocationUploadData.
+        if (envelope.isSuccess) {
+            val empty = runCatching { json.decodeFromString(serializer, "{}") }.getOrNull()
+            if (empty != null) return empty
+        }
+
+        throw ApiException(-1, envelope.message ?: "Empty response from server")
     }
 
     private fun post(path: String, body: String, authenticated: Boolean): String {

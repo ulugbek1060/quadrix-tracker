@@ -95,16 +95,21 @@ object UpdateManager {
     }
 
     /**
-     * Records the version/URL from an API response. Flips the gate to required when [appVersion]
-     * is strictly newer than what is installed; leaves it alone otherwise so a stale-but-equal
-     * response never clears an already-raised gate.
+     * Records a version (and optionally a download URL) reported by any endpoint. Flips the gate
+     * to required when [appVersion] is strictly newer than what is installed; leaves it alone
+     * otherwise so a stale-but-equal response never clears an already-raised gate.
+     *
+     * [apkUrl] may be null — the location upload response carries only `version`, not the
+     * download URL. A non-null URL is remembered; a null one never erases a URL we already have
+     * (the dedicated version endpoint supplies it, or [downloadAndInstall] fetches it on demand).
      */
-    private fun onServerVersion(appVersion: String?, apkUrl: String?) {
+    fun onServerVersion(appVersion: String?, apkUrl: String?) {
         val server = appVersion?.trim().orEmpty()
         val newer = server.isNotEmpty() && isNewer(server, installedVersion)
 
+        if (!apkUrl.isNullOrBlank()) pendingApkUrl = apkUrl
+
         _state.value = if (newer) {
-            pendingApkUrl = apkUrl?.takeIf { it.isNotBlank() }
             _state.value.copy(
                 checking = false,
                 required = true,
@@ -122,6 +127,11 @@ object UpdateManager {
      * settings screen rather than failing silently.
      */
     suspend fun downloadAndInstall(context: Context) {
+        // The update may have been detected from a location upload, which reports only the
+        // version — hit the dedicated version endpoint to obtain the download URL if we lack it.
+        if (pendingApkUrl.isNullOrBlank()) {
+            refreshVersion()
+        }
         val url = pendingApkUrl
         if (url.isNullOrBlank()) {
             _state.value = _state.value.copy(message = "No download URL was provided by the server.")
