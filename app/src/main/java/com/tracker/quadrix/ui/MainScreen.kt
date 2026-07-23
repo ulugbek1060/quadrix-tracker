@@ -44,6 +44,7 @@ import java.util.Locale
 fun MainScreen(
     email: String?,
     deviceId: String,
+    deviceInfo: String,
     online: Boolean,
     tracker: TrackerState,
     permissionsGranted: Boolean,
@@ -89,6 +90,9 @@ fun MainScreen(
 
             Spacer(Modifier.height(16.dp))
             LastFixCard(tracker = tracker)
+
+            Spacer(Modifier.height(16.dp))
+            DeviceInfoCard(deviceInfo = deviceInfo)
         }
     }
 
@@ -216,6 +220,31 @@ private fun LastFixCard(tracker: TrackerState) {
                 InfoRow("Recorded", formatTime(tracker.lastFixAt))
                 InfoRow("Last synced", formatTime(tracker.lastSyncedAt))
             }
+        }
+    }
+}
+
+@Composable
+private fun DeviceInfoCard(deviceInfo: String) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Device info", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(12.dp))
+
+            deviceInfo.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .forEach { line ->
+                    val separator = line.indexOf(':')
+                    if (separator > 0) {
+                        InfoRow(
+                            line.substring(0, separator).trim(),
+                            line.substring(separator + 1).trim(),
+                        )
+                    } else {
+                        Text(line, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
         }
     }
 }

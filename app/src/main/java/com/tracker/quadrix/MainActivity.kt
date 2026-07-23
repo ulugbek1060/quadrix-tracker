@@ -39,6 +39,7 @@ import com.tracker.quadrix.ui.PermissionGateScreen
 import com.tracker.quadrix.ui.PermissionStep
 import com.tracker.quadrix.ui.theme.TrackerTheme
 import com.tracker.quadrix.update.UpdateCheckWorker
+import com.tracker.quadrix.update.UpdateManager
 
 class MainActivity : ComponentActivity() {
 
@@ -94,6 +95,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Recover from a dismissed installer: if a previous update download finished but the
+        // install was cancelled, the force-update gate would otherwise stay stuck on "Installing…"
+        // with no button. Clear that stale state and re-poll so "Update now" is actionable again.
+        UpdateManager.onReturnToForeground()
+        mainViewModel.enforceUpdate()
     }
 
     @Composable
@@ -203,6 +213,7 @@ class MainActivity : ComponentActivity() {
         MainScreen(
             email = authViewModel.userEmail,
             deviceId = authViewModel.deviceId,
+            deviceInfo = authViewModel.deviceInfo,
             online = online,
             tracker = tracker,
             permissionsGranted = true,

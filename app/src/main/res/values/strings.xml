@@ -15,4 +15,11 @@
     <string name="update_notification_title">New version available</string>
     <string name="update_notification_text">A new version of Tracker is available. Tap to update.</string>
     <string name="update_notification_text_versioned">Tracker %1$s is available. Tap to update.</string>
+
+    <!-- Connectivity warning, posted from the background service while the internet is down.
+         Meant to be noticed, so it uses a DEFAULT-importance channel. -->
+    <string name="offline_channel_name">Connectivity</string>
+    <string name="offline_channel_description">Warns when the device loses internet access</string>
+    <string name="offline_notification_title">Internet is off</string>
+    <string name="offline_notification_text">No internet connection. Location fixes are being saved and will upload once you\'re back online.</string>
 </resources>

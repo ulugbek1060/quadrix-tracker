@@ -35,6 +35,7 @@ class AuthRepository(context: Context) {
     val currentUserEmail: String? get() = session.userEmail
     val currentUserName: String? get() = session.userName
     val deviceId: String get() = identity.deviceId
+    val deviceInfo: String get() = identity.deviceInfo
 
     /** Asks the backend to email a verification code. */
     suspend fun requestOtp(email: String): Result<RequestOtpData> = withContext(Dispatchers.IO) {

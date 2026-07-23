@@ -61,6 +61,9 @@ class LocationTrackingService : Service() {
     /** Throttles the background version poll to [VERSION_CHECK_INTERVAL_MS], not every fix. */
     private var lastVersionCheckAt = 0L
 
+    /** Throttles the "internet is off" reminder to [OFFLINE_NOTIFY_INTERVAL_MS] while offline. */
+    private var lastOfflineNotifiedAt = 0L
+
     /** Cancels the one-shot fresh-location request in [requestFreshLocationOnce] on teardown. */
     private var currentLocationCancellation: CancellationTokenSource? = null
 
@@ -80,7 +83,16 @@ class LocationTrackingService : Service() {
         // next 5-minute tick.
         scope.launch {
             connectivity.observe().collect { online ->
-                if (online) flush()
+                if (online) {
+                    // Back online: send the backlog and drop any offline warning immediately.
+                    OfflineNotifier.clear(this@LocationTrackingService)
+                    lastOfflineNotifiedAt = 0L
+                    flush()
+                } else {
+                    // Just went offline — warn now (subject to the 30-minute throttle) rather than
+                    // waiting for the next location tick.
+                    maybeNotifyOffline()
+                }
             }
         }
     }
@@ -191,7 +203,26 @@ class LocationTrackingService : Service() {
             UploadResult.NothingToSend -> Unit
         }
 
+        maybeNotifyOffline()
         maybeCheckForUpdate()
+    }
+
+    /**
+     * Reminds the user, at most once every [OFFLINE_NOTIFY_INTERVAL_MS], that the device has no
+     * internet — fixes are still being recorded and will upload once the connection returns. The
+     * notification is cleared the instant connectivity comes back (see [onCreate]).
+     */
+    private fun maybeNotifyOffline() {
+        if (connectivity.isOnline()) {
+            OfflineNotifier.clear(this)
+            lastOfflineNotifiedAt = 0L
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastOfflineNotifiedAt >= OFFLINE_NOTIFY_INTERVAL_MS) {
+            lastOfflineNotifiedAt = now
+            OfflineNotifier.notifyOffline(this)
+        }
     }
 
     /**
@@ -298,6 +329,9 @@ class LocationTrackingService : Service() {
 
         /** How often the background service polls the version endpoint for a mandatory update. */
         private const val VERSION_CHECK_INTERVAL_MS = 30 * 60 * 1000L
+
+        /** How often to re-post the "internet is off" reminder while the device stays offline. */
+        private const val OFFLINE_NOTIFY_INTERVAL_MS = 30 * 60 * 1000L
 
         fun start(context: Context) {
             SessionManager(context).trackingEnabled = true

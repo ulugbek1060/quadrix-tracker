@@ -121,6 +121,24 @@ object UpdateManager {
     }
 
     /**
+     * Clears a stuck download/installing state when the user comes back to the app.
+     *
+     * [downloadAndInstall] hands the APK to the system installer and leaves the state at 100%
+     * ("Installing…"). If the user dismisses the installer without completing it and returns, this
+     * singleton still reports 100% and ForceUpdateScreen would show a permanent, button-less
+     * "Installing…" — the app looks stuck and there is no way to retry. Resetting the progress here
+     * brings the "Update now" button back so they can try again. A download that is genuinely still
+     * in flight (percent below 100) is left untouched.
+     */
+    fun onReturnToForeground() {
+        val current = _state.value
+        val percent = current.downloadPercent
+        if (percent != null && percent >= 100) {
+            _state.value = current.copy(downloadPercent = null, message = null)
+        }
+    }
+
+    /**
      * Downloads the pending APK to internal storage and launches the system installer. Reports
      * progress through [UpdateState.downloadPercent]. On Android 8+ the user must allow this app
      * to install unknown apps first; when that is not yet granted we send them to the right

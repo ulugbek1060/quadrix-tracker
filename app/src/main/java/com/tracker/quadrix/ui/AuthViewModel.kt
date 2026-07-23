@@ -54,6 +54,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     /** Shown on the main screen so an operator can read off the ID the backend registered. */
     val deviceId: String get() = authRepository.deviceId
 
+    /** Full hardware/OS dump shown on the main screen for support and diagnostics. */
+    val deviceInfo: String get() = authRepository.deviceInfo
+
     fun onEmailChange(value: String) =
         _loginState.update { it.copy(email = value, error = null) }
 
